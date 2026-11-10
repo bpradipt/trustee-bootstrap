@@ -79,9 +79,10 @@ func fakeCDH(t *testing.T, payloads ...ceremony.SharePayload) helper.CDH {
 }
 
 type unlockFixture struct {
-	manifest []byte
-	bundle   []byte
-	payloads []ceremony.SharePayload // alice, bob, carol
+	manifest    []byte
+	bundle      []byte
+	payloads    []ceremony.SharePayload // alice, bob, carol
+	ceremonyDir string                  // holds <holder>.share
 }
 
 // keyCeremonyAndSeal plays the Ceremony Authority (`ceremony split` for
@@ -120,7 +121,7 @@ func keyCeremonyAndSeal(t *testing.T) unlockFixture {
 		t.Errorf("seal printed %q, want the bundle's SHA-256", digest)
 	}
 
-	f := unlockFixture{manifest: manifest, bundle: bundle}
+	f := unlockFixture{manifest: manifest, bundle: bundle, ceremonyDir: ceremonyDir}
 	for _, holder := range []string{"alice", "bob", "carol"} {
 		var share ceremony.ShareFile
 		readJSON(t, filepath.Join(ceremonyDir, holder+".share"), &share)
