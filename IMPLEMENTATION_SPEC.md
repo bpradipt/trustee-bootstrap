@@ -61,10 +61,14 @@ All formats are owned by one Go module in this repo (ADR 0001, ADR 0006).
    - The Bootstrap Helper rejects the manifest if indices or commitments repeat, if `threshold < 2`, or if `threshold > len(shares)`.
 3. **Share file** (one per Security Operator, `0600`): `{"version":1,"key_id":"…","index":1,"share":"<base64 Vault part>"}`.
 4. **Sealed Bundle**: `age -r <recipient>` over a tar of Trustee's config tree. Paths are relative to Trustee's config root.
-   - It contains the KBS config, resource policy, RVPS reference values, resources, admin public key, and Trustee's TLS key and certificate.
+   - It contains the KBS config, resource policy, RVPS reference values, resources, admin public key, the AS token signer key and certificate, and Trustee's TLS key and certificate.
    - Its digest is `sha256` of the sealed file's bytes.
    - It is Trustee's **entire** state (ADR 0002).
    - Size cap: 1 MiB, because it travels in a ConfigMap or Secret.
+   - **Sealed-config checks.** `seal` runs these before encrypting. The Bootstrap Helper runs them again before publishing, because a bundle sealed with stock `age` skipped them. Any failure stops publication.
+     1. The KBS config sets `insecure_header_jwk = false` and `insecure_http = false`, and admin authorization isn't `InsecureAllowAll`.
+     2. The AS token broker names a signer key and certificate that exist in the tree, and KBS `trusted_certs_paths` lists that certificate. Without this, KBS can't verify any token and serves nothing.
+     3. The KBS resource policy exists at the storage backend's exact policy key, is non-empty, and differs from upstream's built-in default. If it's missing, KBS installs that default, which releases every resource to any attested non-sample TEE.
 5. **Share payload**: the plaintext of the KBS resource that the Operator Verifier serves:
    `{"version":1,"key_id":"…","index":1,"share":"…","bundle_sha256":"…"}`.
    It travels only as Trustee's standard JWE to the attested `tee-pubkey`.
@@ -129,7 +133,7 @@ LOCKED -> COLLECTING -> UNSEALING -> PUBLISHED -> exit 0
 any failure -> FAILED -> wipe staging -> exit 1   (no partial config, ever)
 ```
 
-- **On start:** if `--out` already holds a published tree with its completion marker, exit 0 at once. Only this CVM can have written it, because the host can't write into guest tmpfs. Otherwise delete any leftover staging directory and enter LOCKED.
+- **On start:** if `--out` already holds the published tree, exit 0 at once. The completion marker travels inside that tree, so its presence proves the rename finished. Only this CVM can have written it, because the host can't write into guest tmpfs. Otherwise delete any leftover staging directory and enter LOCKED.
 - **LOCKED:** draw `boot_id`. Read the manifest and the bundle into memory once each, with a size cap. From here on, the helper uses only those in-memory copies and never touches the mounted files again. The host controls the ConfigMap files and can swap them at any time. If the helper re-read the bundle at unseal time, the host could show the approved bundle until K Shares arrive and then substitute its own. Check that `sha256(manifest bytes) == --manifest-sha256`, validate the manifest, and compute `sha256(bundle bytes)`.
 - **COLLECTING:** accept a payload only if all of these hold:
   - `key_id` matches the manifest;
@@ -144,8 +148,8 @@ any failure -> FAILED -> wipe staging -> exit 1   (no partial config, ever)
   - symlinks, hardlinks and device files;
   - anything over the size cap.
 
-  Then validate the KBS config in the staged tree. Reject it if it sets `insecure_header_jwk = true`, admin `InsecureAllowAll` or `insecure_http = true` (`seal` applies the same check). Wipe Shares and the key from memory on a best-effort basis.
-- **PUBLISHED:** `0700` directory, files no wider than `0600`, owned by Trustee's UID. Rename the staging directory into place atomically, write the completion marker last, stop the listeners, and exit 0.
+  Then run the sealed-config checks (§3) on the staged tree. Wipe Shares and the key from memory on a best-effort basis.
+- **PUBLISHED:** `0700` directory, files no wider than `0600`, owned by Trustee's UID. Write the completion marker into the staging tree, fsync, then rename the staging directory into place atomically. The rename is the commit point: before it, a restart sees only staging and wipes it; after it, a restart sees the marked tree and exits 0. Then stop the listeners and exit 0.
 - **Restarts.** If the helper restarts before publication, it draws a new `boot_id` and starts with an empty Share set; it never persists accepted Shares. If it restarts after the rename, the completion marker sends it straight to exit 0. A Trustee container restart reuses the published tree. Only pod or CVM recreation wipes the state volume and needs a new Unlock Ceremony (ADR 0002).
 
 ## 6. CLI
@@ -155,7 +159,7 @@ This is one Cobra tree in `pkg/cli`, `NewTrusteeBootstrapCmd()`. `cococtl` mount
 | Command | Who | Does |
 |---|---|---|
 | `ceremony split --threshold K --holders a,b,c` | Ceremony Authority, air-gapped | Generates an age identity, splits it, writes the Share files and `ceremony.json`, and never writes the identity to disk |
-| `seal --manifest ceremony.json <dir>` | Infrastructure Operator, on the controlled sealing machine | Refuses a KBS config with `insecure_header_jwk = true`, `InsecureAllowAll` or `insecure_http = true`. Then tars and age-encrypts the directory and prints the bundle digest. Sealing with the stock `age` CLI skips that check, though the Bootstrap Helper repeats it before publishing |
+| `seal --manifest ceremony.json <dir>` | Infrastructure Operator, on the controlled sealing machine | Runs the sealed-config checks (§3), then tars and age-encrypts the directory and prints the bundle digest. Sealing with the stock `age` CLI skips the checks, though the Bootstrap Helper repeats them before publishing |
 | `policy build --init-data init.toml --reference-values rv.json --accept-tee tdx,snp --bundle-sha256 … --manifest ceremony.json --share-file my.share` | Security Operator | Computes the Init-Data digest itself, and writes the Operator Policy plus the generated KBS config, resource policy and RVPS values, using the claim profile of each accepted TEE type |
 | `approve --endpoint URL --policy DIR --share-file my.share [--kbs-binary PATH]` | Security Operator | Runs the §4 flow. Success means "Share accepted", not "Trustee running" |
 | `status --endpoint URL` | Anyone | Prints the Bootstrap Helper's status |
@@ -212,7 +216,8 @@ test/e2e/                # kind + Kata + swtpm, end to end
 - [ ] Confirm `medium: Memory` `emptyDir` is guest-side tmpfs and survives the init-to-main handoff (Kata bare metal and peer-pods).
 - [ ] Confirm the KBS container image runs on Linux and WSL with `127.0.0.1` port publishing.
 - [ ] Confirm the pinned KBS rejects a self-signed bearer token when `insecure_header_jwk = false`, and rejects admin calls without the ephemeral admin key.
-- [ ] Pin the exact KBS `storage_backend` and `session_storage_type` settings, and the on-disk layout of the published tree, that make unlocked Trustee serve the sealed policy and resources rather than its built-in default.
+- [ ] Pin the exact KBS `storage_backend` and `session_storage_type` settings, and the on-disk layout of the published tree, that make unlocked Trustee serve the sealed policy and resources rather than its built-in default. Record the exact resource-policy key that sealed-config check 3 tests for.
+- [ ] Confirm that a syntactically broken sealed resource policy makes KBS deny every request rather than fall back to the default.
 - [ ] Confirm the AS token broker accepts a supplied signer key and certificate, and that KBS verifies tokens against `trusted_certs_paths` with `insecure_header_jwk = false`.
 - [ ] Check whether guest-components can trust `kbs_cert` alone, without the system roots. If it can't, record that as an upstream gap.
 
@@ -264,8 +269,8 @@ test/e2e/                # kind + Kata + swtpm, end to end
 | AT-23 | Host swaps the bundle or manifest file after LOCKED, before UNSEALING | Bootstrap Helper unseals the bytes it read in LOCKED or fails; it never uses the swapped file |
 | AT-24 | Workloads attest to unlocked Trustee | An authorized workload receives the sealed resources under the sealed policy; an unauthorized one is refused; Trustee never falls back to its built-in default policy |
 | AT-25 | Full Unlock Ceremony through the helper's Service, with the pod not Ready | Operators reach the helper and unlock succeeds |
-| AT-26 | Helper crashes after the rename, before exit 0; separately, the Trustee container restarts | The helper exits 0 on retry without a new ceremony; Trustee reuses the published tree |
-| AT-27 | Sealed KBS config sets `insecure_header_jwk = true`, `InsecureAllowAll` or `insecure_http = true` | `seal` refuses; a bundle sealed with stock `age` is refused by the helper and nothing is published |
+| AT-26 | Helper crashes just before the rename, then just after it; separately, the Trustee container restarts | Before: retry wipes staging and needs a new ceremony. After: retry exits 0 without one. Trustee reuses the published tree |
+| AT-27 | A bundle failing each sealed-config check in turn: insecure flag, missing signer or unlisted certificate, missing, misplaced or default resource policy | `seal` refuses; the same bundle sealed with stock `age` is refused by the helper and nothing is published |
 | AT-28 | Evidence fixtures for every claim profile: matching, wrong Init-Data digest, debug on, a required claim missing | Only the matching evidence gets a release |
 
 ## 11. Definition of done

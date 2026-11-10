@@ -84,9 +84,9 @@ The claim depends on seven conditions:
 | A fake or modified CVM requests Shares | Operator Verifier resource policy requires an accepted TEE type, the expected Init-Data digest, matching reference values and debug off | AT-04 |
 | `tee-pubkey` substitution or evidence replay | Upstream RCAR binds the nonce and key into the evidence | AT-05 |
 | **Relay holder forges an attestation token** naming its own TEE key | The Operator Verifier runs with `insecure_header_jwk = false` and trusts only the certificate of the signer the CLI generated for this run. The CLI refuses a config with that flag set | AT-21, AT-03 |
-| **Unlocked Trustee accepts forged tokens or unauthenticated admin calls**, because its sealed KBS config came from upstream's sample | `seal` and the Bootstrap Helper both refuse a KBS config with `insecure_header_jwk = true`, `InsecureAllowAll` or `insecure_http = true` | AT-21, AT-22, AT-27 |
+| **Unlocked Trustee accepts forged tokens or unauthenticated admin calls**, because its sealed KBS config came from upstream's sample | `seal` and the Bootstrap Helper both run the sealed-config checks (spec §3): no insecure flags, a configured signer whose certificate KBS trusts | AT-21, AT-22, AT-27 |
 | Generic Init-Data or debug check rejects valid evidence, or accepts evidence missing a claim | One claim profile per TEE type; a missing required claim means deny | AT-28 |
-| Helper crash after publication forces a pointless new ceremony, or leaves a half-published tree | Completion marker written last; on start the helper exits 0 if it's present and wipes staging otherwise | AT-15, AT-26 |
+| Helper crash after publication forces a pointless new ceremony, or leaves a half-published tree | The completion marker goes into the staging tree before the atomic rename, so the rename is the single commit point. On start the helper exits 0 if the marked tree exists and wipes staging otherwise | AT-15, AT-26 |
 | Relay holder rewrites the Operator Verifier's resource policy through the admin API | Admin calls need the ephemeral admin key, which the CLI discards. The CLI refuses `InsecureAllowAll` | AT-22 |
 | Host reads the Share in transit | JWE to the attested TEE key. There is no TLS by design (ADR 0005); TLS would protect nothing further | AT-06 |
 | Forged Share | Share Commitment check identifies the bad index | AT-08 |
@@ -97,7 +97,7 @@ The claim depends on seven conditions:
 | One operator acting as many | One Share per index; there are K distinct commitments | AT-07 |
 | Relay used to reach other local services | The CLI dials only its own Operator Verifier port and never an address from a frame. Limits and cleanup apply | AT-19, AT-20 |
 | Host reads unlocked config | `medium: Memory` `emptyDir` (guest tmpfs) owned by Trustee's UID, no exec by agent policy | AT-16 |
-| Unlocked Trustee runs its built-in default policy instead of the sealed one | The sealed config points the KBS storage backend at the published tree; sessions stay in memory | AT-24 |
+| **Unlocked Trustee runs its built-in default policy**, which releases every resource to any attested non-sample TEE | The sealed config points the KBS storage backend at the published tree, and the sealed-config checks require the resource policy at its exact key; sessions stay in memory | AT-24, AT-27 |
 | Operators can't reach the helper (Service routes only to Ready pods) | The helper's Service sets `publishNotReadyAddresses: true` | AT-25 |
 | Trustee replaced after unlock | Image digests and container set pinned by agent policy | AT-04 |
 | Partial or corrupt unseal | Authenticated age decryption, safe tar extraction, atomic rename, fail closed | AT-14 |
