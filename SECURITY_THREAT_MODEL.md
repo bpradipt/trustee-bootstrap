@@ -26,7 +26,7 @@
 - cause an approved CVM to run a config that the K Security Operators did not approve;
 - present Trustee's identity to workloads.
 
-The claim depends on six conditions:
+The claim depends on seven conditions:
 
 1. TEE isolation holds.
 2. The approved Init-Data and agent policy really do constrain the pod: images, args, no exec, and memory-backed state volume.
@@ -34,6 +34,7 @@ The claim depends on six conditions:
 4. Each Security Operator builds their Operator Policy from a reviewed Init-Data and the correct Approved Bundle digest.
 5. The Ceremony Authority destroyed the private key.
 6. Workloads carry Trustee's certificate in their Init-Data, and that certificate names a cluster-internal host or private IP.
+7. The Infrastructure Operator seals on a controlled machine and destroys the plaintext afterwards (ADR 0008).
 
 ## Assets
 
@@ -43,7 +44,7 @@ The claim depends on six conditions:
 | Share | One Security Operator's workstation; JWE in transit; CVM memory | Released only after a successful appraisal |
 | Ceremony Manifest | Untrusted ConfigMap | Integrity only, through the digest pinned in Init-Data |
 | Sealed Bundle | Untrusted ConfigMap or Secret | Confidential under age; authentic only through the Approved Bundle digest |
-| Plaintext config, including Trustee's TLS key | Trustee CVM tmpfs | Never host-visible; only the helper and Trustee can access it |
+| Plaintext config, including Trustee's TLS key | Sealing machine until sealed; then Trustee CVM tmpfs | Destroyed on the sealing machine after `seal`; never host-visible; only the helper and Trustee can access it in the CVM |
 | TEE key (`tee-pubkey` and its private key) | CDH/AA in the CVM | Bound to the evidence by RCAR runtime-data |
 | Operator Policy | Security Operator's workstation | Built by the operator, never taken from the CVM or the host |
 
@@ -65,7 +66,7 @@ The claim depends on six conditions:
 - TEE hardware roots and a TCB that is not in debug mode;
 - the Kata guest and agent-policy enforcement;
 - the Ceremony Authority during the Key Ceremony;
-- the Infrastructure Operator's authoring of the plaintext config, since they see it by design;
+- the Infrastructure Operator and their sealing machine. They see Trustee's TLS key and every resource secret, and must destroy that plaintext after sealing (ADR 0008);
 - each Security Operator's own workstation.
 
 **Out of scope:**
@@ -83,6 +84,9 @@ The claim depends on six conditions:
 | A fake or modified CVM requests Shares | Operator Verifier resource policy requires an accepted TEE type, the expected Init-Data digest, matching reference values and debug off | AT-04 |
 | `tee-pubkey` substitution or evidence replay | Upstream RCAR binds the nonce and key into the evidence | AT-05 |
 | **Relay holder forges an attestation token** naming its own TEE key | The Operator Verifier runs with `insecure_header_jwk = false` and trusts only the certificate of the signer the CLI generated for this run. The CLI refuses a config with that flag set | AT-21, AT-03 |
+| **Unlocked Trustee accepts forged tokens or unauthenticated admin calls**, because its sealed KBS config came from upstream's sample | `seal` and the Bootstrap Helper both refuse a KBS config with `insecure_header_jwk = true`, `InsecureAllowAll` or `insecure_http = true` | AT-21, AT-22, AT-27 |
+| Generic Init-Data or debug check rejects valid evidence, or accepts evidence missing a claim | One claim profile per TEE type; a missing required claim means deny | AT-28 |
+| Helper crash after publication forces a pointless new ceremony, or leaves a half-published tree | Completion marker written last; on start the helper exits 0 if it's present and wipes staging otherwise | AT-15, AT-26 |
 | Relay holder rewrites the Operator Verifier's resource policy through the admin API | Admin calls need the ephemeral admin key, which the CLI discards. The CLI refuses `InsecureAllowAll` | AT-22 |
 | Host reads the Share in transit | JWE to the attested TEE key. There is no TLS by design (ADR 0005); TLS would protect nothing further | AT-06 |
 | Forged Share | Share Commitment check identifies the bad index | AT-08 |
@@ -97,7 +101,7 @@ The claim depends on six conditions:
 | Operators can't reach the helper (Service routes only to Ready pods) | The helper's Service sets `publishNotReadyAddresses: true` | AT-25 |
 | Trustee replaced after unlock | Image digests and container set pinned by agent policy | AT-04 |
 | Partial or corrupt unseal | Authenticated age decryption, safe tar extraction, atomic rename, fail closed | AT-14 |
-| An impostor serves workloads as Trustee | Trustee's TLS key exists only in the Sealed Bundle, and workloads add its certificate as a trust root. Its certificate names a cluster-internal host or private IP, so no public CA will issue a competing one | AT-17 |
+| An impostor serves workloads as Trustee | Once the sealing machine destroys its plaintext, Trustee's TLS key exists only in the Sealed Bundle, and workloads add its certificate as a trust root. Its certificate names a cluster-internal host or private IP, so no public CA will issue a competing one | AT-17 |
 
 ## Security invariants
 
@@ -109,7 +113,7 @@ The claim depends on six conditions:
 6. **No host plaintext:** the key, Shares and config never leave CVM memory, apart from each operator's own Share at that operator.
 7. **No partial start:** Trustee starts only after a complete, atomic publish.
 8. **Fresh boot, fresh ceremony:** accepted Shares are never persisted, and a restart means a new Unlock Ceremony.
-9. **Identity follows approval:** only an approved Trustee CVM holds Trustee's TLS key. This protects workloads only while no other trusted CA can certify Trustee's host name (see residual risks).
+9. **Identity follows approval:** after sealing, only an approved Trustee CVM holds Trustee's TLS key. The sealing machine held it before then and is trusted to have destroyed it (ADR 0008). This protects workloads only while no other trusted CA can certify Trustee's host name (see residual risks).
 10. **Only genuine tokens:** the Operator Verifier accepts only attestation tokens signed by its own AS key.
 
 ## Residual risks
@@ -119,7 +123,8 @@ The claim depends on six conditions:
 - **Plain HTTP relay.** Evidence, Init-Data plaintext, tokens and status are visible to network observers. None of them is secret, but this is metadata exposure.
 - **`kbs_cert` adds a root; it doesn't pin.** Workload guests keep their system CAs. If a guest trusts a CA that will certify Trustee's host name, that CA's customer can impersonate Trustee and serve workloads fake resources, though it can't obtain their secrets. A cluster-internal name or private IP limits this to private CAs in the guest image.
 - **Upstream sample configs are unsafe here.** Trustee's sample KBS config enables `insecure_header_jwk` and `InsecureAllowAll`. The CLI must generate its own config and reject both.
-- **The Infrastructure Operator sees the plaintext config.** This is accepted by design.
+- **The Infrastructure Operator sees the plaintext config.** A copy kept after sealing lets them impersonate Trustee and read every resource it serves. The quorum can't detect this; only the sealing runbook guards against it (ADR 0008).
+- **Claim profiles cover only what was tested.** A TEE type whose profile has never passed a real-TEE run may accept wrong evidence. Production Operator Policies accept only tested profiles.
 - **Released Shares are irrevocable for a live boot.** If Alice releases her Share for bundle A and later approves only B, the host can keep that CVM collecting. A compromised Bob then completes the unlock of A. Alice withdraws only by getting the CVM restarted. `--deadline` limits this in the honest case, but the host influences the guest clock.
 - **Availability.** Every pod recreation needs K Security Operators, with a single replica and no HA (ADR 0002). Runtime KBS admin writes are lost on restart.
 - **Roster change** requires a full new Key Ceremony, a re-seal, new Init-Data and new Operator Policies.

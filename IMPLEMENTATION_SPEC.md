@@ -31,7 +31,7 @@ Unlock an unmodified, full CNCF Trustee running in a **Trustee CVM** only after 
 - **Bootstrap Attestation**: each Operator Verifier appraises the Trustee CVM: the TEE evidence, the Init-Data digest, and through Init-Data the Kata Agent policy, image digests and the Ceremony Manifest digest.
 - **Workload Attestation**: the unlocked Trustee appraises other confidential workloads in normal service.
 
-**How workloads trust Trustee:** Trustee's TLS private key exists only inside the Sealed Bundle. Workloads add Trustee's certificate (`kbs_cert`) to their own Init-Data. Rotating Trustee's certificate means sealing a new bundle and updating every workload's Init-Data.
+**How workloads trust Trustee:** Trustee's TLS private key exists only inside the Sealed Bundle, once the Infrastructure Operator has destroyed the plaintext they sealed it from (ADR 0008). Workloads add Trustee's certificate (`kbs_cert`) to their own Init-Data. Rotating Trustee's certificate means sealing a new bundle and updating every workload's Init-Data.
 
 `kbs_cert` *adds* a trust root; the guest keeps trusting its system CAs. So Trustee's certificate must name a host that no public CA will certify: a cluster-internal DNS name or a private IP. Otherwise anyone holding a publicly trusted certificate for that name can impersonate Trustee to workloads. An impostor still can't obtain workload secrets, but it can serve workloads fake resources. *(Phase 0: check whether guest-components can disable the system roots.)*
 
@@ -41,7 +41,7 @@ Unlock an unmodified, full CNCF Trustee running in a **Trustee CVM** only after 
 |---|---|---|
 | **Ceremony Authority** | Air-gapped machine, once per Key Ceremony | Generating the key pair, splitting it into Shares, and retiring the private key |
 | **Security Operator** | Own Linux/WSL workstation | Their own Share, and their own Operator Policy |
-| **Infrastructure Operator** | Anywhere | Nothing with respect to Shares. Authors the plaintext config and seals it |
+| **Infrastructure Operator** | Controlled sealing machine | Authoring the plaintext config, sealing it, and destroying the plaintext afterwards (ADR 0008). Never holds a Share |
 | Kubernetes, host and network | — | Nothing. May drop, replay, reorder or substitute anything |
 | **Bootstrap Helper** | Init container in the Trustee CVM | Only once Bootstrap Attestation has verified it |
 | CDH/AA | Trustee CVM sandbox (stock CoCo) | RCAR client; holds the TEE key |
@@ -129,6 +129,7 @@ LOCKED -> COLLECTING -> UNSEALING -> PUBLISHED -> exit 0
 any failure -> FAILED -> wipe staging -> exit 1   (no partial config, ever)
 ```
 
+- **On start:** if `--out` already holds a published tree with its completion marker, exit 0 at once. Only this CVM can have written it, because the host can't write into guest tmpfs. Otherwise delete any leftover staging directory and enter LOCKED.
 - **LOCKED:** draw `boot_id`. Read the manifest and the bundle into memory once each, with a size cap. From here on, the helper uses only those in-memory copies and never touches the mounted files again. The host controls the ConfigMap files and can swap them at any time. If the helper re-read the bundle at unseal time, the host could show the approved bundle until K Shares arrive and then substitute its own. Check that `sha256(manifest bytes) == --manifest-sha256`, validate the manifest, and compute `sha256(bundle bytes)`.
 - **COLLECTING:** accept a payload only if all of these hold:
   - `key_id` matches the manifest;
@@ -142,9 +143,10 @@ any failure -> FAILED -> wipe staging -> exit 1   (no partial config, ever)
   - absolute paths and `..`;
   - symlinks, hardlinks and device files;
   - anything over the size cap.
-  Wipe Shares and the key from memory on a best-effort basis.
-- **PUBLISHED:** `0700` directory, files no wider than `0600`. Rename the staging directory into place atomically, stop the listeners, and exit 0.
-- A restart of any kind gives a new `boot_id` and an empty Share set. Accepted Shares are never persisted.
+
+  Then validate the KBS config in the staged tree. Reject it if it sets `insecure_header_jwk = true`, admin `InsecureAllowAll` or `insecure_http = true` (`seal` applies the same check). Wipe Shares and the key from memory on a best-effort basis.
+- **PUBLISHED:** `0700` directory, files no wider than `0600`, owned by Trustee's UID. Rename the staging directory into place atomically, write the completion marker last, stop the listeners, and exit 0.
+- **Restarts.** If the helper restarts before publication, it draws a new `boot_id` and starts with an empty Share set; it never persists accepted Shares. If it restarts after the rename, the completion marker sends it straight to exit 0. A Trustee container restart reuses the published tree. Only pod or CVM recreation wipes the state volume and needs a new Unlock Ceremony (ADR 0002).
 
 ## 6. CLI
 
@@ -153,11 +155,12 @@ This is one Cobra tree in `pkg/cli`, `NewTrusteeBootstrapCmd()`. `cococtl` mount
 | Command | Who | Does |
 |---|---|---|
 | `ceremony split --threshold K --holders a,b,c` | Ceremony Authority, air-gapped | Generates an age identity, splits it, writes the Share files and `ceremony.json`, and never writes the identity to disk |
-| `seal --manifest ceremony.json <dir>` | Infrastructure Operator | Tars and age-encrypts the directory, and prints the bundle digest. The stock `age` CLI is an acceptable substitute |
-| `policy build --init-data init.toml --reference-values rv.json --accept-tee tdx,snp --bundle-sha256 … --manifest ceremony.json --share-file my.share` | Security Operator | Computes the Init-Data digest itself, and writes the Operator Policy plus the generated KBS config, resource policy and RVPS values |
+| `seal --manifest ceremony.json <dir>` | Infrastructure Operator, on the controlled sealing machine | Refuses a KBS config with `insecure_header_jwk = true`, `InsecureAllowAll` or `insecure_http = true`. Then tars and age-encrypts the directory and prints the bundle digest. Sealing with the stock `age` CLI skips that check, though the Bootstrap Helper repeats it before publishing |
+| `policy build --init-data init.toml --reference-values rv.json --accept-tee tdx,snp --bundle-sha256 … --manifest ceremony.json --share-file my.share` | Security Operator | Computes the Init-Data digest itself, and writes the Operator Policy plus the generated KBS config, resource policy and RVPS values, using the claim profile of each accepted TEE type |
 | `approve --endpoint URL --policy DIR --share-file my.share [--kbs-binary PATH]` | Security Operator | Runs the §4 flow. Success means "Share accepted", not "Trustee running" |
 | `status --endpoint URL` | Anyone | Prints the Bootstrap Helper's status |
 
+- **Claim profiles.** Each TEE type reports Init-Data and debug state differently. Azure vTPM and the TPM attester put `sha256(0³² ‖ digest)` in PCR8. TDX may bind the digest through RTMR3 and leave MRCONFIGID zero. Azure SNP reports the debug policy as a string. So `policy build` holds one claim profile per TEE type, giving the claim paths and types, the digest transformation, the debug check and the required reference values. The generated resource policy denies when any claim the profile requires is missing. Phase 0 writes the profile table.
 - **Operator Verifier runtime:** the default is the digest-pinned Trustee KBS image, run with podman or docker as `-p 127.0.0.1:<port>`. `--kbs-binary` uses a natively installed `kbs` instead.
 - **Attestation collateral** comes from Intel PCS or a PCCS, AMD KDS, or offline files, using Trustee's own settings.
 - There is no interactive prompt. Running `approve` against a valid Operator Policy *is* the approval.
@@ -203,6 +206,7 @@ test/e2e/                # kind + Kata + swtpm, end to end
 
 - [ ] Pin Trustee, guest-components, Kata, genpolicy, and CAA for peer-pods.
 - [ ] Get the Kata + swtpm TPM attester running in a CI runner with KVM. Confirm what Trustee's TPM verifier requires (AK/EK trust) and that the Init-Data digest appears in its claims.
+- [ ] Write the claim-profile table (§6) for tdx, snp, az-snp-vtpm, az-tdx-vtpm and tpm at the pinned Trustee version, with positive and negative evidence fixtures for each profile.
 - [ ] Run stock CDH `get_resource` through a guest-loopback proxy and a WebSocket relay to a local `insecure_http` KBS with a benign resource, using a resource policy keyed on the Init-Data digest.
 - [ ] Confirm genpolicy pins the Bootstrap Helper's args and denies exec in the generated policy.
 - [ ] Confirm `medium: Memory` `emptyDir` is guest-side tmpfs and survives the init-to-main handoff (Kata bare metal and peer-pods).
@@ -227,7 +231,7 @@ test/e2e/                # kind + Kata + swtpm, end to end
 
 ### Phase 3 — release gate (real TEE) and hardening
 
-- [ ] Repeat Phase 2 on at least one of TDX, SNP or Azure vTPM.
+- [ ] Repeat Phase 2 on at least one of TDX, SNP or Azure vTPM. A production Operator Policy may accept only the TEE types whose claim profile has passed a real-TEE run.
 - [ ] Redacted audit events. Runbooks for the Unlock Ceremony, Trustee upgrades, and roster change by a fresh Key Ceremony.
 - [ ] SBOM, dependency pinning, and no test-only flags on the production path.
 
@@ -249,17 +253,20 @@ test/e2e/                # kind + Kata + swtpm, end to end
 | AT-12 | 1 valid Share of 2-of-3 | Stays locked |
 | AT-13 | 2 valid Shares of 2-of-3 | Unlocks; Trustee starts |
 | AT-14 | Corrupt bundle; tar with `..`, absolute path, symlink, hardlink or device file; oversized bundle | FAILED; nothing published |
-| AT-15 | Bootstrap Helper crash or restart | New `boot_id`; earlier Shares gone |
+| AT-15 | Bootstrap Helper crash or restart before publication | New `boot_id`; earlier Shares gone; leftover staging directory removed |
 | AT-16 | Host reads the state volume | No plaintext (real-TEE release gate) |
 | AT-17 | Workload carries Trustee's certificate in its Init-Data and attests | Succeeds against the unlocked Trustee |
 | AT-18 | `approve` exits (success, failure or signal) | No listener, container or Share temp file remains |
 | AT-19 | Second concurrent relay | `409` |
 | AT-20 | Relay idle, total-time, frame-size and connection-count limits | Enforced; relay closed |
-| AT-21 | Relay holder presents a self-signed attestation token that names its own TEE key | No release |
-| AT-22 | Relay holder calls the Operator Verifier's admin API, for example to replace the resource policy | Rejected; policy unchanged |
+| AT-21 | A self-signed attestation token naming the attacker's TEE key, sent to the Operator Verifier through the relay, and to the unlocked Trustee | No release from either |
+| AT-22 | Admin API call without the admin key, for example to replace the resource policy, against the Operator Verifier and the unlocked Trustee | Rejected; policy unchanged |
 | AT-23 | Host swaps the bundle or manifest file after LOCKED, before UNSEALING | Bootstrap Helper unseals the bytes it read in LOCKED or fails; it never uses the swapped file |
 | AT-24 | Workloads attest to unlocked Trustee | An authorized workload receives the sealed resources under the sealed policy; an unauthorized one is refused; Trustee never falls back to its built-in default policy |
 | AT-25 | Full Unlock Ceremony through the helper's Service, with the pod not Ready | Operators reach the helper and unlock succeeds |
+| AT-26 | Helper crashes after the rename, before exit 0; separately, the Trustee container restarts | The helper exits 0 on retry without a new ceremony; Trustee reuses the published tree |
+| AT-27 | Sealed KBS config sets `insecure_header_jwk = true`, `InsecureAllowAll` or `insecure_http = true` | `seal` refuses; a bundle sealed with stock `age` is refused by the helper and nothing is published |
+| AT-28 | Evidence fixtures for every claim profile: matching, wrong Init-Data digest, debug on, a required claim missing | Only the matching evidence gets a release |
 
 ## 11. Definition of done
 

@@ -9,7 +9,7 @@ A person who holds exactly one Share and decides, after verifying the Trustee CV
 _Avoid_: operator (alone), security admin, approver
 
 **Infrastructure Operator**:
-The person who deploys the Trustee CVM and produces the Sealed Bundle. Untrusted with respect to Shares.
+The person who authors Trustee's plaintext config, seals it into the Sealed Bundle and deploys the Trustee CVM. Trusted to destroy the plaintext after sealing; never holds a Share.
 _Avoid_: IO, cluster admin, operator (alone)
 
 **Ceremony Authority**:
