@@ -6,6 +6,12 @@
 
 Terms in **bold** are defined in `GLOSSARY.md`. Design rationale lives in the ADRs and is not repeated here.
 
+![Setup](docs/diagrams/setup.drawio.svg)
+
+![Unlock Ceremony](docs/diagrams/unlock-ceremony.drawio.svg)
+
+Diagram source: `docs/diagrams/trustee-bootstrap.drawio` (page 1 is the Unlock Ceremony, page 2 is Setup). The SVGs embed the diagram, so either file opens in draw.io for editing.
+
 ## 0. Mission and constraints
 
 Unlock an unmodified, full CNCF Trustee running in a **Trustee CVM** only after K-of-N **Security Operators** have each independently appraised that CVM and released their **Share** to it. Each Security Operator runs an **Operator Verifier**: a stock Trustee KBS with its built-in AS, on their own workstation and bound to `127.0.0.1`. The Operator Verifier reaches the CVM through a tunnel that the operator's CLI opens outbound. Inside the CVM, a **Bootstrap Helper** init container collects the Shares, reconstructs the bootstrap private key, unseals the **Sealed Bundle** into guest memory, and exits so that Trustee can start.
