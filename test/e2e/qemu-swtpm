@@ -1,0 +1,35 @@
+#!/bin/bash
+# Kata hypervisor "path" for the swtpm runtime class. Kata has no vTPM option
+# for QEMU, so this wrapper gives each pod VM its own swtpm, cloned from the
+# provisioned template (EK at 0x81010001, AK at 0x81010002), and adds the TPM
+# to the QEMU command line.
+set -euo pipefail
+
+template=/opt/kata-swtpm/template
+mkdir -p /run/kata-swtpm
+# ponytail: state dirs of finished VMs are left behind (a few KiB each); add a
+# sweep if a long-lived node ever runs enough pods for that to matter.
+dir=$(mktemp -d /run/kata-swtpm/vm.XXXXXX)
+cp -a "$template/." "$dir/"
+
+# The shim reads QEMU's stderr to see it exit, and passes it fds, so swtpm
+# must hold none of them open: close every inherited fd before starting it.
+(
+	for fd in "/proc/$BASHPID/fd"/*; do
+		n=${fd##*/}
+		[[ $n -gt 2 ]] && eval "exec $n>&-"
+	done
+	exec swtpm socket --tpm2 --tpmstate dir="$dir" \
+		--ctrl type=unixio,path="$dir/sock" --terminate --daemon \
+		--log file="$dir/log" </dev/null >/dev/null 2>&1
+) 2>/dev/null
+
+for _ in $(seq 50); do
+	[[ -S $dir/sock ]] && break
+	sleep 0.1
+done
+
+exec /usr/bin/qemu-system-x86_64 "$@" \
+	-chardev socket,id=chrtpm,path="$dir/sock" \
+	-tpmdev emulator,id=tpm0,chardev=chrtpm \
+	-device tpm-crb,tpmdev=tpm0
