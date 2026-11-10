@@ -6,6 +6,7 @@ The spec lives at the repo root, so there is one copy:
 - `SECURITY_THREAT_MODEL.md`: claims, invariants and residual risks. Every change must keep these true.
 - `GLOSSARY.md`: use these terms in code, tests and tickets.
 - `docs/adr/`: why the design looks the way it does. Read the ADR before you change a decision it records.
+- `docs/upstream-pins.md`: the exact upstream tags, commits and image digests. Build and test against these, not `main`.
 
 Tickets are in `issues/`: vertical slices, numbered in dependency order. Status moves `ready-for-agent` → `in-progress` → `done`. Take the lowest-numbered `ready-for-agent` ticket whose blockers are all `done`, and set it to `in-progress` before you start.
 
