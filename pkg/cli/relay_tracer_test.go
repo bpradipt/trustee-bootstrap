@@ -3,7 +3,9 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
@@ -18,6 +20,8 @@ import (
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/cli"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/policy"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 const (
@@ -70,9 +74,9 @@ type workstation struct {
 	t        *testing.T
 	loopback memnet.Network
 	cvm      *memnet.Network
-	payloads []ceremony.SharePayload // by share index - 1
-	deny     bool                    // the verifier's resource policy refuses release
-	output   []string                // everything the CLI printed
+	deny     bool               // the verifier's resource policy refuses release
+	started  []verifier.Options // every Operator Verifier approve started
+	output   []string           // everything the CLI printed
 }
 
 func (w *workstation) run(args ...string) (string, error) {
@@ -90,15 +94,19 @@ func (w *workstation) run(args ...string) (string, error) {
 
 // startStubVerifier stands in for the Operator Verifier: it serves this
 // operator's Share payload at the KBS resource path, with no attestation.
-func (w *workstation) startStubVerifier(_ context.Context, address string, share ceremony.ShareFile) (string, func(), error) {
+func (w *workstation) startStubVerifier(_ context.Context, address string, opts verifier.Options) (string, func(), error) {
+	w.started = append(w.started, opts)
 	if host, _, err := net.SplitHostPort(address); err != nil || host != "127.0.0.1" {
 		w.t.Errorf("Operator Verifier listens on %q, want 127.0.0.1 only", address)
+	}
+	if !strings.Contains(opts.ResourcePolicy, "affirming") || len(opts.ReferenceValues[policy.RefTrustedAKs]) == 0 {
+		w.t.Errorf("Operator Verifier started without the Operator Policy: %+v", opts)
 	}
 	l, err := w.loopback.Listen("tcp", address)
 	if err != nil {
 		return "", nil, err
 	}
-	payload := w.payloads[share.Index-1]
+	payload := opts.SharePayload
 	srv := &http.Server{Handler: http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != kbsSharePath {
 			http.NotFound(rw, r)
@@ -108,7 +116,7 @@ func (w *workstation) startStubVerifier(_ context.Context, address string, share
 			http.Error(rw, "policy denied", http.StatusUnauthorized)
 			return
 		}
-		if err := json.NewEncoder(rw).Encode(payload); err != nil {
+		if _, err := rw.Write(payload); err != nil {
 			w.t.Error(err)
 		}
 	})}
@@ -140,7 +148,35 @@ func (w *workstation) assertStatus(endpoint string, state helper.State, accepted
 
 func (w *workstation) approve(endpoint string, f unlockFixture, holder string) (string, error) {
 	w.t.Helper()
-	return w.run("approve", "--endpoint", endpoint, "--share-file", filepath.Join(f.ceremonyDir, holder+".share"))
+	return w.run("approve", "--endpoint", endpoint, "--policy", buildPolicy(w.t, f, holder),
+		"--share-file", filepath.Join(f.ceremonyDir, holder+".share"))
+}
+
+// buildPolicy runs holder's `policy build` for a tpm Trustee CVM and returns
+// the Operator Policy directory.
+func buildPolicy(t *testing.T, f unlockFixture, holder string) string {
+	t.Helper()
+	dir := t.TempDir()
+	initData := filepath.Join(dir, "init.toml")
+	rv := filepath.Join(dir, "rv.json")
+	if err := os.WriteFile(initData, []byte("version = \"0.1.0\"\nalgorithm = \"sha256\"\n[data]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rv, []byte(`{"trusted_aks":["AK"],"tpm_pcr11":["00"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "policy")
+	printed := mustRun(t, "policy", "build", "--init-data", initData, "--reference-values", rv, "--accept-tee", "tpm",
+		"--bundle-sha256", f.payloads[0].BundleSHA256, "--manifest", filepath.Join(f.ceremonyDir, cli.ManifestFile),
+		"--share-file", filepath.Join(f.ceremonyDir, holder+".share"), "--out-dir", out)
+	toml, err := os.ReadFile(initData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := sha256.Sum256(toml); printed != "init_data_sha256 "+hex.EncodeToString(sum[:])+"\n" {
+		t.Errorf("policy build printed %q, want the Init-Data digest", printed)
+	}
+	return out
 }
 
 // AT-13 through the relay, in-process.
@@ -148,7 +184,7 @@ func TestTwoOperatorsUnlockThroughRelay(t *testing.T) {
 	f := keyCeremonyAndSeal(t)
 	var cvm memnet.Network
 	out := startTrusteeCVM(t, f, &cvm)
-	ws := &workstation{t: t, cvm: &cvm, payloads: f.payloads}
+	ws := &workstation{t: t, cvm: &cvm}
 	endpoint := "http://" + helperAddr
 
 	first := ws.assertStatus(endpoint, helper.StateCollecting, []int{})
@@ -193,7 +229,7 @@ func TestApproveReportsShareNotAccepted(t *testing.T) {
 	f := keyCeremonyAndSeal(t)
 	var cvm memnet.Network
 	startTrusteeCVM(t, f, &cvm)
-	ws := &workstation{t: t, cvm: &cvm, payloads: f.payloads, deny: true}
+	ws := &workstation{t: t, cvm: &cvm, deny: true}
 	endpoint := "http://" + helperAddr
 
 	got, err := ws.approve(endpoint, f, "bob")

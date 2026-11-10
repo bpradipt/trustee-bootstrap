@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 // NewTrusteeBootstrapCmdWith returns the command tree with approve and status
@@ -16,7 +16,7 @@ import (
 func NewTrusteeBootstrapCmdWith(
 	client *http.Client,
 	dial func(ctx context.Context, network, address string) (net.Conn, error),
-	startVerifier func(ctx context.Context, address string, share ceremony.ShareFile) (string, func(), error),
+	startVerifier func(ctx context.Context, address string, opts verifier.Options) (string, func(), error),
 ) *cobra.Command {
 	return newRootCmd(env{client: client, dial: dial, startVerifier: startVerifier})
 }

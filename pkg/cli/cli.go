@@ -33,7 +33,9 @@ func newRootCmd(e env) *cobra.Command {
 	}
 	ceremonyCmd := &cobra.Command{Use: "ceremony", Short: "Key Ceremony commands"}
 	ceremonyCmd.AddCommand(newSplitCmd())
-	root.AddCommand(ceremonyCmd, newSealCmd(), newApproveCmd(e), newStatusCmd(e))
+	policyCmd := &cobra.Command{Use: "policy", Short: "Operator Policy commands"}
+	policyCmd.AddCommand(newPolicyBuildCmd())
+	root.AddCommand(ceremonyCmd, newSealCmd(), policyCmd, newApproveCmd(e), newStatusCmd(e))
 	return root
 }
 
@@ -118,7 +120,7 @@ func newSealCmd() *cobra.Command {
 		Short: "Seal a Trustee config tree into a Sealed Bundle and print its SHA-256",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m, err := readManifest(manifestPath)
+			m, err := readJSONFile[ceremony.Manifest](manifestPath, "ceremony manifest")
 			if err != nil {
 				return err
 			}
@@ -136,16 +138,17 @@ func newSealCmd() *cobra.Command {
 	return cmd
 }
 
-func readManifest(path string) (ceremony.Manifest, error) {
-	var m ceremony.Manifest
+// readJSONFile reads the JSON file at path; what names it in errors.
+func readJSONFile[T any](path, what string) (T, error) {
+	var v T
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return m, fmt.Errorf("read ceremony manifest: %w", err)
+		return v, fmt.Errorf("read %s: %w", what, err)
 	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return m, fmt.Errorf("parse ceremony manifest: %w", err)
+	if err := json.Unmarshal(b, &v); err != nil {
+		return v, fmt.Errorf("parse %s: %w", what, err)
 	}
-	return m, nil
+	return v, nil
 }
 
 // sealToFile seals dir into output and returns the bundle's hex SHA-256.

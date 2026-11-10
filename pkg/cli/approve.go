@@ -3,12 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
 
 	"github.com/coder/websocket"
@@ -16,7 +14,9 @@ import (
 
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/policy"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/relay"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 // verifierAddress is where approve starts the Operator Verifier: loopback
@@ -27,36 +27,32 @@ const verifierAddress = "127.0.0.1:0"
 type env struct {
 	client *http.Client // reaches the Bootstrap Helper
 	dial   func(ctx context.Context, network, address string) (net.Conn, error)
-	// startVerifier starts the Operator Verifier on address, serving the
-	// Share payload for share. It returns the address it listens on.
-	startVerifier func(ctx context.Context, address string, share ceremony.ShareFile) (string, func(), error)
+	// startVerifier starts the Operator Verifier on address. It returns the
+	// address it listens on.
+	startVerifier func(ctx context.Context, address string, opts verifier.Options) (string, func(), error)
 }
 
 func defaultEnv() env {
-	return env{client: http.DefaultClient, dial: (&net.Dialer{}).DialContext, startVerifier: noVerifier}
-}
-
-// noVerifier refuses to run: until Bootstrap Attestation is wired in, approve
-// has nothing that may release a Share.
-func noVerifier(context.Context, string, ceremony.ShareFile) (string, func(), error) {
-	return "", nil, errors.New("this build has no Operator Verifier")
+	rt := verifier.Runtime{Engine: verifier.DefaultEngine(), Listen: net.Listen, Client: http.DefaultClient}
+	return env{client: http.DefaultClient, dial: (&net.Dialer{}).DialContext, startVerifier: rt.Start}
 }
 
 func newApproveCmd(e env) *cobra.Command {
-	var endpoint, shareFile string
+	var endpoint, policyDir, shareFile, kbsBinary string
 	cmd := &cobra.Command{
-		Use:   "approve --endpoint URL --share-file FILE",
+		Use:   "approve --endpoint URL --policy DIR --share-file FILE",
 		Short: "Release your Share to the Trustee CVM through the Bootstrap Helper's relay",
-		Long: "Start the Operator Verifier on 127.0.0.1, open the relay to the Bootstrap Helper and " +
-			"serve its attestation through it. Prints \"accepted\" once the helper accepts the Share; " +
-			"that does not mean Trustee is running.",
+		Long: "Check your Share against your Operator Policy, start the Operator Verifier on 127.0.0.1, " +
+			"open the relay to the Bootstrap Helper and serve its attestation through it. Prints " +
+			"\"accepted\" once the helper accepts the Share; that does not mean Trustee is running.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			share, err := readShareFile(shareFile)
+			share, opts, err := loadApproval(policyDir, shareFile)
 			if err != nil {
 				return err
 			}
-			if err := e.approve(cmd.Context(), endpoint, share); err != nil {
+			opts.KBSBinary = kbsBinary
+			if err := e.approve(cmd.Context(), endpoint, share, opts); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "accepted")
@@ -64,9 +60,36 @@ func newApproveCmd(e env) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Bootstrap Helper URL (http:// or https://)")
+	cmd.Flags().StringVar(&policyDir, "policy", "", "your Operator Policy directory (policy build --out-dir)")
 	cmd.Flags().StringVar(&shareFile, "share-file", "", "your Share file")
-	requireFlags(cmd, "endpoint", "share-file")
+	cmd.Flags().StringVar(&kbsBinary, "kbs-binary", "", "run this natively installed kbs instead of the pinned KBS image")
+	requireFlags(cmd, "endpoint", "policy", "share-file")
 	return cmd
+}
+
+// loadApproval reads the Share file and the Operator Policy and checks the
+// Share against its Share Commitment, before anything starts.
+func loadApproval(policyDir, shareFile string) (ceremony.ShareFile, verifier.Options, error) {
+	share, err := readJSONFile[ceremony.ShareFile](shareFile, "Share file")
+	if err != nil {
+		return share, verifier.Options{}, err
+	}
+	p, err := policy.Load(policyDir)
+	if err != nil {
+		return share, verifier.Options{}, err
+	}
+	if err := p.CheckShare(share); err != nil {
+		return share, verifier.Options{}, err
+	}
+	payload, err := json.Marshal(ceremony.SharePayload{ShareFile: share, BundleSHA256: p.BundleSHA256})
+	if err != nil {
+		return share, verifier.Options{}, fmt.Errorf("encode Share payload: %w", err)
+	}
+	return share, verifier.Options{
+		ResourcePolicy:  p.ResourcePolicy,
+		ReferenceValues: p.ReferenceValues,
+		SharePayload:    payload,
+	}, nil
 }
 
 func newStatusCmd(e env) *cobra.Command {
@@ -90,20 +113,8 @@ func newStatusCmd(e env) *cobra.Command {
 	return cmd
 }
 
-func readShareFile(path string) (ceremony.ShareFile, error) {
-	var s ceremony.ShareFile
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return s, fmt.Errorf("read Share file: %w", err)
-	}
-	if err := json.Unmarshal(b, &s); err != nil {
-		return s, fmt.Errorf("parse Share file: %w", err)
-	}
-	return s, nil
-}
-
 // approve runs one Security Operator's flow (spec §4). It never prints the Share.
-func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareFile) error {
+func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareFile, opts verifier.Options) error {
 	st, err := e.status(ctx, endpoint)
 	if err != nil {
 		return err
@@ -114,7 +125,7 @@ func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareF
 	if slices.Contains(st.Accepted, share.Index) {
 		return fmt.Errorf("index %d already accepted this boot", share.Index)
 	}
-	addr, stop, err := e.startVerifier(ctx, verifierAddress, share)
+	addr, stop, err := e.startVerifier(ctx, verifierAddress, opts)
 	if err != nil {
 		return fmt.Errorf("start Operator Verifier: %w", err)
 	}
