@@ -17,15 +17,27 @@ const (
 	SignerKeyFile      = "as-signer.key" // the AS token signer, generated per run
 	SignerCertFile     = "as-signer.crt" // its self-signed certificate, the only one KBS trusts
 	StorageDir         = "storage"       // the KBS LocalFs storage backend
+	// ResourcePolicyPath holds the KBS resource policy: storage namespace
+	// "kbs", key "resource-policy.rego" (Trustee v0.22.0 KBS_POLICY_ID).
+	// KBS installs its built-in default policy whenever this file is absent.
+	ResourcePolicyPath = "storage/kbs/resource-policy.rego"
+)
+
+// Files that only a Trustee config tree has, relative to its root.
+const (
+	TLSKeyFile  = "tls.key" // Trustee's HTTPS key, sealed in the bundle
+	TLSCertFile = "tls.crt" // its certificate: the kbs_cert workloads pin
 )
 
 // Config is a Trustee v0.22.0 KBS config file, limited to the keys the
-// default secure Operator Verifier config sets. Ticket 06 derives the
-// Trustee config from it, and the sealed-config checks read these keys.
+// default secure Operator Verifier and Trustee configs set. The sealed-config
+// checks read these keys.
 type Config struct {
 	HTTPServer struct {
 		Sockets      []string `toml:"sockets"`
 		InsecureHTTP bool     `toml:"insecure_http"`
+		PrivateKey   string   `toml:"private_key,omitempty"`
+		Certificate  string   `toml:"certificate,omitempty"`
 	} `toml:"http_server"`
 	AttestationToken struct {
 		// InsecureHeaderJWK lets a token name its own signing key. Through
@@ -107,6 +119,19 @@ func DefaultConfig(root, socket string) Config {
 	c.StorageBackend.Backends.LocalFS.DirPath = filepath.Join(root, StorageDir)
 	c.SessionStorageType = "Memory"
 	c.Plugins = []Plugin{{Name: "resource", StorageBackendType: "kvstorage"}}
+	return c
+}
+
+// DefaultTrusteeConfig is the default secure Trustee config (spec §7) for a
+// published tree that KBS sees at root. It is the Operator Verifier's,
+// except that KBS serves HTTPS on every interface with Trustee's sealed key.
+// The storage backend is the published tree, so KBS starts from the sealed
+// resource policy, resources and reference values; sessions stay in memory.
+func DefaultTrusteeConfig(root string) Config {
+	c := DefaultConfig(root, "0.0.0.0:8080")
+	c.HTTPServer.InsecureHTTP = false
+	c.HTTPServer.PrivateKey = filepath.Join(root, TLSKeyFile)
+	c.HTTPServer.Certificate = filepath.Join(root, TLSCertFile)
 	return c
 }
 

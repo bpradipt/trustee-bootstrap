@@ -60,6 +60,34 @@ func TestDefaultConfigIsSecure(t *testing.T) {
 	}
 }
 
+func TestDefaultTrusteeConfig(t *testing.T) {
+	c := verifier.DefaultTrusteeConfig("/trustee/config")
+	if err := verifier.CheckSecure(c); err != nil {
+		t.Fatalf("CheckSecure(DefaultTrusteeConfig) = %v", err)
+	}
+	if c.HTTPServer.InsecureHTTP || c.HTTPServer.PrivateKey != "/trustee/config/tls.key" ||
+		c.HTTPServer.Certificate != "/trustee/config/tls.crt" {
+		t.Errorf("http_server = %+v, want HTTPS with Trustee's sealed key", c.HTTPServer)
+	}
+	if c.StorageBackend.Backends.LocalFS.DirPath != "/trustee/config/storage" || c.SessionStorageType != "Memory" {
+		t.Errorf("storage = %+v, sessions %q; want the published tree and in-memory sessions",
+			c.StorageBackend, c.SessionStorageType)
+	}
+
+	// The example config is the default, key for key.
+	var example verifier.Config
+	md, err := toml.DecodeFile("../../deploy/examples/trustee-config/kbs.toml", &example)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extra := md.Undecoded(); len(extra) > 0 {
+		t.Errorf("the example config sets keys the default does not: %v", extra)
+	}
+	if !reflect.DeepEqual(example, c) {
+		t.Errorf("example config = %+v\nwant %+v", example, c)
+	}
+}
+
 // answering is a KBS that answers the readiness probe once the fake
 // executable has recorded its arguments.
 type answering struct{ executable string }
@@ -167,6 +195,8 @@ func assertRunDir(t *testing.T, dir string) {
 	}
 	assertSigner(t, read(verifier.SignerKeyFile), read(verifier.SignerCertFile))
 	storage := filepath.Join(verifier.StorageDir)
+	// KBS v0.22.0 installs its built-in default policy unless this exact
+	// key holds one.
 	if got := string(read(filepath.Join(storage, "kbs", "resource-policy.rego"))); got != opts.ResourcePolicy {
 		t.Errorf("resource policy = %q", got)
 	}

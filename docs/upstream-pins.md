@@ -106,6 +106,8 @@ Read from Trustee v0.22.0 source, not from running the image:
 | AA builder | `docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c` | same release as the Kata 4.2.0 guest rootfs (resolute) |
 | Rust | `1.95.0` | guest-components v0.22.0 `rust-toolchain.toml` |
 | Probe image | `docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec` | pulled in the guest by `verify` |
+| Bootstrap Helper builder | `docker.io/library/golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648` | `cmd/bootstrap-helper/Containerfile` (ticket 06) |
+| Test registry | `docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e` | serves the helper image to the kind node and the guest in `trustee-cvm.sh` |
 
 QEMU, swtpm and tpm2-tools come from the kind node's distribution packages. They are not pinned. Ticket 04's Comments record the versions that ran.
 

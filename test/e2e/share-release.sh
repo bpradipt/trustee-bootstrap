@@ -10,8 +10,8 @@
 #
 # The Bootstrap Helper runs as a plain process in a busybox Kata pod, reached
 # through a NodePort. Its binary, the Ceremony Manifest and the Sealed Bundle
-# are fetched from a file server on the kind gateway; ticket 06 replaces this
-# with the real Trustee CVM pod. alice's Operator Verifier is the pinned KBS
+# are fetched from a file server on the kind gateway. trustee-cvm.sh runs the
+# real Trustee CVM pod instead. alice's Operator Verifier is the pinned KBS
 # image. carol's uses --kbs-binary with a wrapper that runs the image's kbs in
 # the host network namespace, because the image's kbs needs Intel DCAP
 # libraries that a stock host lacks.

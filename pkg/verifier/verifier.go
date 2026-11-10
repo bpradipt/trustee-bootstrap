@@ -216,7 +216,7 @@ func runFiles(cfg Config, opts Options) (map[string][]byte, error) {
 		AdminPublicKeyFile: adminPub,
 		SignerKeyFile:      key,
 		SignerCertFile:     cert,
-		filepath.Join(StorageDir, "kbs", "resource-policy.rego"):                                []byte(opts.ResourcePolicy),
+		ResourcePolicyPath: []byte(opts.ResourcePolicy),
 		filepath.Join(StorageDir, "repository", strings.ReplaceAll(ShareResource, "/", `\x2F`)): opts.SharePayload,
 	}
 	for name, values := range opts.ReferenceValues {
