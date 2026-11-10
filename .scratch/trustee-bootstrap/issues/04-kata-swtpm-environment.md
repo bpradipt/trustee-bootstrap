@@ -8,7 +8,7 @@
 
 **Spec:** §7 Platforms, §9 Phase 0.
 
-- [ ] The same script works on a KVM-capable Linux host and in a CI runner. *(KVM host: yes. CI runner: not run, left to ticket 07. See Comments.)*
+- [ ] The same script works on a KVM-capable Linux host and in a CI runner. *(KVM host: yes. CI runner: not run. Ticket 07 added the workflow, but the repo has no remote to run it on. See Comments.)*
 - [x] A test pod's AA produces TPM evidence that the pinned Trustee TPM verifier accepts.
 - [x] The Init-Data digest shows in the verifier's claims (expected: PCR8 = `sha256(0³² ‖ digest)`).
 - [x] The ticket records what the TPM verifier requires for AK/EK trust.
