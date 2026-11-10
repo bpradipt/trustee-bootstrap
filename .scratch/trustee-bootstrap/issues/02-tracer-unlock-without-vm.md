@@ -6,12 +6,20 @@ Keep the checks minimal: commitment, index and `key_id` validation lands in tick
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Spec:** §3 items 1-5, §5, §6 (`ceremony split`, `seal`), §8; ADR 0001, 0002, 0003, 0006.
 
-- [ ] `ceremony split` writes the Share files and the Ceremony Manifest and never writes the age identity to disk.
-- [ ] `seal` produces a bundle that the stock `age` CLI can also produce, and prints its SHA-256.
-- [ ] With two valid Share payloads, the helper publishes the unsealed tree and exits 0 (AT-13, in-process).
-- [ ] With one, it stays locked (AT-12, in-process).
-- [ ] the Go gate exits 0.
+- [x] `ceremony split` writes the Share files and the Ceremony Manifest and never writes the age identity to disk.
+- [x] `seal` produces a bundle that the stock `age` CLI can also produce, and prints its SHA-256.
+- [x] With two valid Share payloads, the helper publishes the unsealed tree and exits 0 (AT-13, in-process).
+- [x] With one, it stays locked (AT-12, in-process).
+- [x] the Go gate exits 0.
+
+## Comments
+
+- **the Go gate against `trustee-bootstrap` exits 0:** golangci-lint 0 issues, gremlins 60 killed and 0 lived, jscpd no new clones. It ran with the pinned tools installed under a scratch `HOME`, because the agent sandbox can't read `its tools directory`.
+- **Stock `age`.** The `age` CLI is not installed. `seal` writes a tar of the tree encrypted with `age.Encrypt` in age's binary format, which is what `tar -C dir -cf - . | age -r <recipient>` writes. `TestSealOutputIsStandardAge` decrypts the `seal` output with `age.Decrypt` and the identity rebuilt from two Shares. `TestUnsealAcceptsStockAgeBundle` builds a bundle the way the stock tools do (GNU tar's `./` names, then `age.Encrypt`), and `Unseal` accepts it. No test runs the `age` binary itself.
+- **"Exits 0".** The helper binary needs the relay that ticket 03 adds, so this ticket ships no `cmd/bootstrap-helper`. In process, `Helper.CollectShare` returns `true, nil` once it has published the tree. `cmd/trustee-bootstrap` is the standalone CLI.
+- **Fake CDH.** The sandbox denies TCP `bind`, so `httptest.NewServer` fails. The fake CDH is an `http.Handler` served through an in-process `http.RoundTripper`. The helper reaches the CDH through `helper.CDH{URL, Client}`; ticket 03 passes `http://127.0.0.1:8006` and a real client.
+- Left for later tickets, as planned: Share validation, duplicate indices and the manifest validator (08); the `--manifest-sha256` pin, `bundle_sha256` and the size caps (09); sealed-config checks and the full safe-extraction rules (10); fsync, staging cleanup and the restart path (11). `Unseal` already extracts only directories and regular files, and it extracts through `os.Root`, which keeps every path inside the staging directory.
