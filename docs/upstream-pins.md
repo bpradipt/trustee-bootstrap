@@ -94,6 +94,21 @@ Read from Trustee v0.22.0 source, not from running the image:
 - On x86_64, `kbs/Cargo.toml` pulls `attestation-service` with `all-verifier`. That set includes `tpm-verifier`, `tdx-verifier`, `snp-verifier`, `az-snp-vtpm-verifier` and `az-tdx-vtpm-verifier`. The s390x build carries only the snp, nvidia and se verifiers.
 - The image sets no `ENTRYPOINT` or `CMD`. Run `/usr/local/bin/kbs --config-file <path>`.
 
+## swtpm test environment
+
+`test/e2e/kind-kata-swtpm.sh` (ticket 04) uses the pins above, plus these. Checked on 2026-11-11.
+
+| What | Pin | Why |
+|------|-----|-----|
+| kind | `v0.33.0`, `kind-linux-amd64` sha256 `aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d` | release asset |
+| kind node | `kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5` | default node of kind v0.33.0 |
+| Guest kernel source | Linux `6.18.35` | Kata 4.2.0 `versions.yaml` `assets.kernel.version` |
+| AA builder | `docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c` | same release as the Kata 4.2.0 guest rootfs (resolute) |
+| Rust | `1.95.0` | guest-components v0.22.0 `rust-toolchain.toml` |
+| Probe image | `docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec` | pulled in the guest by `verify` |
+
+QEMU, swtpm and tpm2-tools come from the kind node's distribution packages. They are not pinned. Ticket 04's Comments record the versions that ran.
+
 ## Updating a pin
 
 Change the row, the source link and the check date in the same commit. If you move Kata, also move Trustee and guest-components to the commits that Kata's `versions.yaml` names.
