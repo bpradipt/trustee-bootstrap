@@ -1,0 +1,24 @@
+# The limits of the Go gate, copied from the config it passes to
+# golangci-lint with -c. test/e2e/ci.sh lint uses this file in CI.
+version: "2"
+# Print paths relative to the repository, not to this file.
+run:
+  relative-path-mode: wd
+linters:
+  default: none
+  enable: [gocognit, cyclop, funlen]
+  settings:
+    gocognit:
+      min-complexity: 15
+    cyclop:
+      max-complexity: 10
+    funlen:
+      lines: 60
+      statements: 40
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gocognit, cyclop, funlen]
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
