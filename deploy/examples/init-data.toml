@@ -1,0 +1,21 @@
+version = "0.1.0"
+algorithm = "sha256"
+
+[data]
+"aa.toml" = '''
+[eventlog_config]
+init_pcr = 17
+enable_eventlog = false
+
+[token_configs.kbs]
+url = "http://127.0.0.1:8081"
+'''
+
+"cdh.toml" = '''
+socket = "unix:///run/confidential-containers/cdh.sock"
+credentials = []
+
+[kbc]
+name = "cc_kbc"
+url = "http://127.0.0.1:8081"
+'''

@@ -1,0 +1,58 @@
+# The default secure Trustee config (KBS v0.22.0), for a published tree that
+# Trustee sees at /trustee/config. It equals verifier.DefaultTrusteeConfig;
+# a test in pkg/verifier keeps the two in step.
+#
+# The Infrastructure Operator puts this file at the root of the tree they
+# seal, next to:
+#   tls.key, tls.crt              Trustee's HTTPS key and certificate (kbs_cert)
+#   as-signer.key, as-signer.crt  the AS token signer, P-256, SEC1 key
+#   admin.pub                     the admin public key
+#   storage/kbs/resource-policy.rego     the resource policy (this exact key)
+#   storage/repository/<repo>\x2F<type>\x2F<tag>   resources
+#   storage/reference_value/<name>       RVPS reference values
+
+# RCAR sessions never touch the published tree.
+session_storage_type = "Memory"
+
+[http_server]
+sockets = ["0.0.0.0:8080"]
+insecure_http = false
+private_key = "/trustee/config/tls.key"
+certificate = "/trustee/config/tls.crt"
+
+[attestation_token]
+# A token may not name its own signing key.
+insecure_header_jwk = false
+trusted_certs_paths = ["/trustee/config/as-signer.crt"]
+
+[attestation_service]
+type = "coco_as_builtin"
+
+[attestation_service.attestation_token_broker.signer]
+key_path = "/trustee/config/as-signer.key"
+cert_path = "/trustee/config/as-signer.crt"
+
+[attestation_service.rvps_config]
+type = "BuiltIn"
+
+[admin]
+authorization_mode = "AuthenticatedAuthorization"
+
+[[admin.authentication.bearer_jwt.identity_providers]]
+public_key_uri = "/trustee/config/admin.pub"
+
+[[admin.authorization.regex_acl.acls]]
+role = "admin"
+allowed_endpoints = "^/kbs/v0/.+$"
+
+# KBS loads its resource policy, resources, AS policies and reference values
+# from here: the published tree, so it starts from the sealed state.
+[storage_backend]
+storage_type = "LocalFs"
+
+[storage_backend.backends.local_fs]
+dir_path = "/trustee/config/storage"
+
+[[plugins]]
+name = "resource"
+storage_backend_type = "kvstorage"
