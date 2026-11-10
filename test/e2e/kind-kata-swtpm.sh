@@ -414,4 +414,5 @@ main() {
 	esac
 }
 
-main "$@"
+# Other e2e tests source this file for its functions.
+[[ ${BASH_SOURCE[0]} != "$0" ]] || main "$@"
