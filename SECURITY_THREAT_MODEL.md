@@ -29,7 +29,7 @@
 The claim depends on six conditions:
 
 1. TEE isolation holds.
-2. The approved Init-Data and agent policy really do constrain the pod: images, args, no exec, and memory-backed config volume.
+2. The approved Init-Data and agent policy really do constrain the pod: images, args, no exec, and memory-backed state volume.
 3. RCAR's binding of `tee-pubkey` and JWE delivery are enforced by the unmodified upstream code.
 4. Each Security Operator builds their Operator Policy from a reviewed Init-Data and the correct Approved Bundle digest.
 5. The Ceremony Authority destroyed the private key.
@@ -43,7 +43,7 @@ The claim depends on six conditions:
 | Share | One Security Operator's workstation; JWE in transit; CVM memory | Released only after a successful appraisal |
 | Ceremony Manifest | Untrusted ConfigMap | Integrity only, through the digest pinned in Init-Data |
 | Sealed Bundle | Untrusted ConfigMap or Secret | Confidential under age; authentic only through the Approved Bundle digest |
-| Plaintext config, including Trustee's TLS key | Trustee CVM tmpfs | Never host-visible; Trustee gets read-only access |
+| Plaintext config, including Trustee's TLS key | Trustee CVM tmpfs | Never host-visible; only the helper and Trustee can access it |
 | TEE key (`tee-pubkey` and its private key) | CDH/AA in the CVM | Bound to the evidence by RCAR runtime-data |
 | Operator Policy | Security Operator's workstation | Built by the operator, never taken from the CVM or the host |
 
@@ -82,17 +82,19 @@ The claim depends on six conditions:
 |---|---|---|
 | A fake or modified CVM requests Shares | Operator Verifier resource policy requires an accepted TEE type, the expected Init-Data digest, matching reference values and debug off | AT-04 |
 | `tee-pubkey` substitution or evidence replay | Upstream RCAR binds the nonce and key into the evidence | AT-05 |
-| **Relay holder forges an attestation token** naming its own TEE key | The Operator Verifier runs with `insecure_header_jwk = false` and trusts only its own AS signing key. The CLI refuses a config with that flag set | AT-21 |
+| **Relay holder forges an attestation token** naming its own TEE key | The Operator Verifier runs with `insecure_header_jwk = false` and trusts only the certificate of the signer the CLI generated for this run. The CLI refuses a config with that flag set | AT-21, AT-03 |
 | Relay holder rewrites the Operator Verifier's resource policy through the admin API | Admin calls need the ephemeral admin key, which the CLI discards. The CLI refuses `InsecureAllowAll` | AT-22 |
 | Host reads the Share in transit | JWE to the attested TEE key. There is no TLS by design (ADR 0005); TLS would protect nothing further | AT-06 |
 | Forged Share | Share Commitment check identifies the bad index | AT-08 |
 | **Host seals its own bundle to the public recipient** | The Approved Bundle digest travels inside each JWE share payload, and the Bootstrap Helper rejects a mismatch (ADR 0004) | AT-09 |
 | **Host swaps the bundle or manifest after the helper checks it** | The Bootstrap Helper reads each file into memory once, in LOCKED, and hashes and decrypts only those bytes | AT-23 |
-| Bundle rollback | An older digest is not in the operators' current Operator Policy | AT-10 |
+| Bundle rollback | On a fresh boot, an older digest is not in the operators' current Operator Policy. Within one boot, a Share already released stays valid (residual risk) | AT-10 |
 | **Host swaps the Ceremony Manifest** (its own commitments, threshold 1) | The manifest digest is pinned in the Bootstrap Helper's args through the agent policy in Init-Data. A missing arg is fatal (ADR 0007) | AT-11 |
 | One operator acting as many | One Share per index; there are K distinct commitments | AT-07 |
 | Relay used to reach other local services | The CLI dials only its own Operator Verifier port and never an address from a frame. Limits and cleanup apply | AT-19, AT-20 |
-| Host reads unlocked config | `medium: Memory` `emptyDir` (guest tmpfs), read-only mount, no exec by agent policy | AT-16 |
+| Host reads unlocked config | `medium: Memory` `emptyDir` (guest tmpfs) owned by Trustee's UID, no exec by agent policy | AT-16 |
+| Unlocked Trustee runs its built-in default policy instead of the sealed one | The sealed config points the KBS storage backend at the published tree; sessions stay in memory | AT-24 |
+| Operators can't reach the helper (Service routes only to Ready pods) | The helper's Service sets `publishNotReadyAddresses: true` | AT-25 |
 | Trustee replaced after unlock | Image digests and container set pinned by agent policy | AT-04 |
 | Partial or corrupt unseal | Authenticated age decryption, safe tar extraction, atomic rename, fail closed | AT-14 |
 | An impostor serves workloads as Trustee | Trustee's TLS key exists only in the Sealed Bundle, and workloads add its certificate as a trust root. Its certificate names a cluster-internal host or private IP, so no public CA will issue a competing one | AT-17 |
@@ -118,6 +120,7 @@ The claim depends on six conditions:
 - **`kbs_cert` adds a root; it doesn't pin.** Workload guests keep their system CAs. If a guest trusts a CA that will certify Trustee's host name, that CA's customer can impersonate Trustee and serve workloads fake resources, though it can't obtain their secrets. A cluster-internal name or private IP limits this to private CAs in the guest image.
 - **Upstream sample configs are unsafe here.** Trustee's sample KBS config enables `insecure_header_jwk` and `InsecureAllowAll`. The CLI must generate its own config and reject both.
 - **The Infrastructure Operator sees the plaintext config.** This is accepted by design.
+- **Released Shares are irrevocable for a live boot.** If Alice releases her Share for bundle A and later approves only B, the host can keep that CVM collecting. A compromised Bob then completes the unlock of A. Alice withdraws only by getting the CVM restarted. `--deadline` limits this in the honest case, but the host influences the guest clock.
 - **Availability.** Every pod recreation needs K Security Operators, with a single replica and no HA (ADR 0002). Runtime KBS admin writes are lost on restart.
 - **Roster change** requires a full new Key Ceremony, a re-seal, new Init-Data and new Operator Policies.
 - **TPM/swtpm** environments give no confidentiality. Only Operator Policies keep them out of production.

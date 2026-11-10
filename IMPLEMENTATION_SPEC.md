@@ -95,7 +95,8 @@ All formats are owned by one Go module in this repo (ADR 0001, ADR 0006).
    - the Share payload as the only resource, at `trustee-bootstrap/share/current`, written to a `0700` tmpfs directory;
    - an ephemeral admin key that is thrown away;
    - `[attestation_token] insecure_header_jwk = false`, trusting only the built-in AS signing key generated for this run;
-   - admin `authorization_mode` set to require the ephemeral admin key. `InsecureAllowAll` is forbidden.
+   - admin `authorization_mode` set to require the ephemeral admin key. `InsecureAllowAll` is forbidden;
+   - a token signer generated for this run: an EC key and a self-signed certificate in the tmpfs directory. The AS token broker's `signer` takes the key and certificate paths, and KBS `[attestation_token] trusted_certs_paths` lists that certificate. Without this, KBS refuses to start, because the AS's default throwaway signer has no certificate for KBS to trust.
 
    Upstream's sample `kbs-config.toml` sets `insecure_header_jwk = true` and `InsecureAllowAll`. Don't copy it. The relay can reach every KBS endpoint. With the first setting, the relay holder can present a self-signed token naming their own TEE key and receive the Share. With the second, they can rewrite the resource policy. The CLI refuses to start a KBS whose generated config contains either setting.
 3. The CLI calls `status`, checks `key_id` and that its own index has not been accepted yet, then opens the relay.
@@ -135,6 +136,8 @@ any failure -> FAILED -> wipe staging -> exit 1   (no partial config, ever)
   - `sha256(share)` equals that index's commitment;
   - `bundle_sha256` equals the digest of the in-memory bundle.
   A payload that fails any check is rejected and **not** counted, and its index is reported in status and audit. Accepted Shares stay in memory only. There is no deadline unless `--deadline` is set.
+
+  **A released Share is irrevocable for that boot.** A Security Operator who changes their Operator Policy after releasing a Share can't withdraw it, because they reach the CVM only through the host. A later Share naming the same bundle completes the unlock, even from a compromised operator. To withdraw an approval, operators get the CVM restarted, which wipes every accepted Share. `--deadline` discards accepted Shares when it expires. Treat it as cleanup, not as a security control, because the host influences the guest clock.
 - **UNSEALING:** at `threshold` Shares, run `shamir.Combine`, then age-decrypt the in-memory bundle bytes and extract the tar into a staging directory on the output volume. Extraction rejects:
   - absolute paths and `..`;
   - symlinks, hardlinks and device files;
@@ -170,9 +173,11 @@ This is one Cobra tree in `pkg/cli`, `NewTrusteeBootstrapCmd()`. `cococtl` mount
   - the mounts;
   - denial of exec and of additional containers *(Phase 0: confirm the genpolicy defaults)*.
 - **ConfigMaps** (untrusted): `ceremony.json` and the Sealed Bundle (or a Secret, if the platform requires it).
-- **Config volume.** It is shared between the init and main containers and is a `emptyDir` with `medium: Memory`, which is a tmpfs inside the guest *(Phase 0: prove it is guest-side on every platform)*. Trustee mounts it read-only at its config path.
-- **Runtime-state volume.** KBS writes RCAR sessions to its storage backend during normal attestation, so a read-only mount alone breaks the first workload attestation. Give Trustee a second `emptyDir` with `medium: Memory`, writable by Trustee only. Point the KBS storage backend and session storage at it. The sealed config sets these paths, and the read-only volume holds nothing that KBS writes. Under ADR 0002, everything on this volume disappears on restart.
-- **Services.** The Bootstrap Helper's port is exposed by its own Service, and Trustee's KBS port by another. Network policy is optional and is never a confidentiality boundary.
+- **State volume.** One `emptyDir` with `medium: Memory`, a tmpfs inside the guest *(Phase 0: prove it is guest-side on every platform)*, shared by the init and main containers. The Bootstrap Helper publishes the whole unsealed tree into it: the KBS config plus the initial contents of the KBS storage backend (resource policy, resources, AS policies, RVPS reference values). Trustee's UID owns it and can write to it.
+  - KBS loads policies and resources from its storage backend and installs its built-in default policy when none is present. The sealed config must therefore point `storage_backend` at the published tree, so Trustee starts with the approved state.
+  - The sealed config sets `session_storage_type` to in-memory, so RCAR sessions never touch the published tree.
+  - The volume isn't read-only, because KBS and AS write default policies and sessions at startup. Read-only would only stop a compromised Trustee process, which is out of scope. Under ADR 0002, everything on it disappears on restart.
+- **Services.** The Bootstrap Helper's port gets its own Service with `publishNotReadyAddresses: true` and a numeric `targetPort`. The pod stays not-Ready while the init container runs, so an ordinary Service would never route operators to the helper. Trustee's KBS port gets a separate, ordinary Service. Network policy is optional and is never a confidentiality boundary.
 - **Platforms.** The core is platform-agnostic: bare-metal TDX and SNP, peer-pods, and Azure SNP/TDX vTPM. TPM (swtpm) is used for CI and dev. The only thing that makes an environment production is which TEE types an Operator Policy accepts. There are no build flags and no dev binary.
 
 ## 8. Repository layout
@@ -203,7 +208,8 @@ test/e2e/                # kind + Kata + swtpm, end to end
 - [ ] Confirm `medium: Memory` `emptyDir` is guest-side tmpfs and survives the init-to-main handoff (Kata bare metal and peer-pods).
 - [ ] Confirm the KBS container image runs on Linux and WSL with `127.0.0.1` port publishing.
 - [ ] Confirm the pinned KBS rejects a self-signed bearer token when `insecure_header_jwk = false`, and rejects admin calls without the ephemeral admin key.
-- [ ] Run a full workload RCAR against unlocked Trustee with the config volume read-only and runtime state on the writable volume.
+- [ ] Pin the exact KBS `storage_backend` and `session_storage_type` settings, and the on-disk layout of the published tree, that make unlocked Trustee serve the sealed policy and resources rather than its built-in default.
+- [ ] Confirm the AS token broker accepts a supplied signer key and certificate, and that KBS verifies tokens against `trusted_certs_paths` with `insecure_header_jwk = false`.
 - [ ] Check whether guest-components can trust `kbs_cert` alone, without the system roots. If it can't, record that as an upstream gap.
 
 **Stop/escalate** if any item fails. Write up the blocker and the smallest upstream change. Never fall back to self-reported evidence, a plaintext share POST, or a host-visible volume.
@@ -231,20 +237,20 @@ test/e2e/                # kind + Kata + swtpm, end to end
 |---|---|---|
 | AT-01 | Existing `cococtl` commands | Unchanged |
 | AT-02 | `approve` running | Only a `127.0.0.1` listener on the operator machine; all remote connections outbound |
-| AT-03 | Genuine Trustee CVM, matching Operator Policy | Share released and accepted |
+| AT-03 | Genuine Trustee CVM, matching Operator Policy, Operator Verifier running with `insecure_header_jwk = false` and its per-run signer | Share released and accepted |
 | AT-04 | Different image digest, weakened agent policy or other Init-Data | No release |
 | AT-05 | Replayed evidence or substituted `tee-pubkey` | No release |
 | AT-06 | Observer on host or relay | Cannot recover a Share |
 | AT-07 | Same index delivered twice | Counted once |
 | AT-08 | Share that does not match its commitment | Rejected; index reported |
 | AT-09 | Host mounts its own bundle sealed to the recipient | Every Share rejected (digest mismatch); Trustee does not start |
-| AT-10 | Host mounts an older, previously approved bundle | Rejected unless the operators' current policy approves that digest |
+| AT-10 | Host mounts an older bundle on a fresh boot, after operators moved their policies to a newer digest | Every Share rejected (digest mismatch). Within one boot, Shares already released stay valid (§5) |
 | AT-11 | Swapped `ceremony.json`, or `--manifest-sha256` dropped | Bootstrap Helper fails in LOCKED |
 | AT-12 | 1 valid Share of 2-of-3 | Stays locked |
 | AT-13 | 2 valid Shares of 2-of-3 | Unlocks; Trustee starts |
 | AT-14 | Corrupt bundle; tar with `..`, absolute path, symlink, hardlink or device file; oversized bundle | FAILED; nothing published |
 | AT-15 | Bootstrap Helper crash or restart | New `boot_id`; earlier Shares gone |
-| AT-16 | Host reads the config volume | No plaintext (real-TEE release gate) |
+| AT-16 | Host reads the state volume | No plaintext (real-TEE release gate) |
 | AT-17 | Workload carries Trustee's certificate in its Init-Data and attests | Succeeds against the unlocked Trustee |
 | AT-18 | `approve` exits (success, failure or signal) | No listener, container or Share temp file remains |
 | AT-19 | Second concurrent relay | `409` |
@@ -252,7 +258,8 @@ test/e2e/                # kind + Kata + swtpm, end to end
 | AT-21 | Relay holder presents a self-signed attestation token that names its own TEE key | No release |
 | AT-22 | Relay holder calls the Operator Verifier's admin API, for example to replace the resource policy | Rejected; policy unchanged |
 | AT-23 | Host swaps the bundle or manifest file after LOCKED, before UNSEALING | Bootstrap Helper unseals the bytes it read in LOCKED or fails; it never uses the swapped file |
-| AT-24 | Workload attests to unlocked Trustee, with the config volume read-only | Succeeds; sessions land on the runtime-state volume |
+| AT-24 | Workloads attest to unlocked Trustee | An authorized workload receives the sealed resources under the sealed policy; an unauthorized one is refused; Trustee never falls back to its built-in default policy |
+| AT-25 | Full Unlock Ceremony through the helper's Service, with the pod not Ready | Operators reach the helper and unlock succeeds |
 
 ## 11. Definition of done
 
