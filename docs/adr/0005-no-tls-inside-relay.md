@@ -9,4 +9,4 @@ Every security property is carried elsewhere:
 - Share Commitments reject forged Shares.
 - The approved bundle digest travels inside the JWE.
 
-A man-in-the-middle can read evidence and tokens, but it can't read, forge or redirect a Share. Keeping inner TLS would have needed a bootstrap CA, because Init-Data trusts exactly one KBS certificate. It would also have needed per-operator leaf certificates with an IP SAN for 127.0.0.1 and a certificate lifecycle, all for no added property. The Bootstrap Helper's own outer certificate can't be bound to attestation anyway.
+A man-in-the-middle can read evidence and tokens, but it can't read, forge or redirect a Share. Keeping inner TLS would have needed a bootstrap CA, because Init-Data accepts only one KBS certificate (a single PEM, added to the system roots). It would also have needed per-operator leaf certificates with an IP SAN for 127.0.0.1 and a certificate lifecycle, all for no added property. The Bootstrap Helper's own outer certificate can't be bound to attestation anyway.
