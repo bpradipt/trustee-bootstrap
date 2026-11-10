@@ -7,6 +7,8 @@ The spec lives at the repo root, so there is one copy:
 - `GLOSSARY.md`: use these terms in code, tests and tickets.
 - `docs/adr/`: why the design looks the way it does. Read the ADR before you change a decision it records.
 
-Tickets are in `issues/`, numbered in dependency order. Status moves `open` → `in-progress` → `done`. Take the lowest-numbered `open` ticket whose `Blocked by` tickets are all `done`, and set it to `in-progress` before you start.
+Tickets are in `issues/`: vertical slices, numbered in dependency order. Status moves `ready-for-agent` → `in-progress` → `done`. Take the lowest-numbered `ready-for-agent` ticket whose blockers are all `done`, and set it to `in-progress` before you start.
 
-Decided after the reviews: we ship a default secure Trustee config (ticket 05) rather than tracking every upstream config option. The sealed-config checks (spec §3) stay as the guard.
+Tickets 02 and 03 are tracer bullets: the whole Unlock Ceremony working in one Go test, before any VM. Ticket 06 makes it work on swtpm. Tickets 08 to 14 each add one hardening property, end to end, and most can run in parallel.
+
+Decided after the reviews: we ship default secure configs (tickets 05 and 06) rather than tracking every upstream config option. The sealed-config checks (spec §3) stay as the guard.

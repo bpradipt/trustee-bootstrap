@@ -1,18 +1,12 @@
-# 01 Pin upstream versions
+# 01: Pin upstream versions
 
-Status: open
-Type: spike
-Blocked by: none
+**What to build:** a recorded set of exact upstream versions that every later ticket builds and tests against: Trustee (KBS + AS), guest-components (CDH/AA), Kata Containers, genpolicy, cloud-api-adaptor for peer-pods, and the Trustee KBS container image. Prefer recent tagged releases.
 
-## What
+**Blocked by:** None (can start immediately)
 
-Choose and record the exact upstream versions everything else builds on: Trustee (KBS + AS), guest-components (CDH/AA), Kata Containers, genpolicy, cloud-api-adaptor (for peer-pods), and the Trustee KBS container image digest. Prefer recent tagged releases; record the commit SHA for each.
+**Status:** ready-for-agent
 
-## Spec
+**Spec:** §0 requirement 7, §9 Phase 0.
 
-`IMPLEMENTATION_SPEC.md` §9 Phase 0, first item; §0 requirement 7.
-
-## Done when
-
-- [ ] `docs/upstream-pins.md` lists each component with tag, commit SHA and, for images, `@sha256` digest.
-- [ ] Every later ticket cites these pins rather than `main`.
+- [ ] Each component has a tag and commit SHA; each image has an `@sha256` digest.
+- [ ] The pins live in one document in the repo, and later tickets cite it rather than `main`.
