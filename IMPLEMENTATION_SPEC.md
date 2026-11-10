@@ -290,7 +290,8 @@ Synthetic or TPM-only evidence never counts as security completion.
 ## 12. References
 
 - Original proposal: `Trustee onboarding in enclave.md`
-- RCAR: https://github.com/confidential-containers/trustee/blob/main/kbs/docs/kbs_attestation_protocol.md
+- Upstream versions: `docs/upstream-pins.md`. Cite these pins, not `main`.
+- RCAR: https://github.com/confidential-containers/trustee/blob/v0.22.0/kbs/docs/kbs_attestation_protocol.md
 - CoCo Init-Data: https://confidentialcontainers.org/docs/features/initdata/
 - CDH get-resource: https://confidentialcontainers.org/docs/features/get-resource/
 - `cococtl`: https://github.com/confidential-devhub/cococtl
