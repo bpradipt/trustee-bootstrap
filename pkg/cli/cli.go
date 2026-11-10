@@ -22,6 +22,10 @@ const ManifestFile = "ceremony.json"
 
 // NewTrusteeBootstrapCmd returns the trustee-bootstrap command tree.
 func NewTrusteeBootstrapCmd() *cobra.Command {
+	return newRootCmd(defaultEnv())
+}
+
+func newRootCmd(e env) *cobra.Command {
 	root := &cobra.Command{
 		Use:          "trustee-bootstrap",
 		Short:        "Unlock Trustee in a confidential VM with K-of-N Security Operators",
@@ -29,8 +33,17 @@ func NewTrusteeBootstrapCmd() *cobra.Command {
 	}
 	ceremonyCmd := &cobra.Command{Use: "ceremony", Short: "Key Ceremony commands"}
 	ceremonyCmd.AddCommand(newSplitCmd())
-	root.AddCommand(ceremonyCmd, newSealCmd())
+	root.AddCommand(ceremonyCmd, newSealCmd(), newApproveCmd(e), newStatusCmd(e))
 	return root
+}
+
+// requireFlags marks flags required; a name that isn't a flag is a bug.
+func requireFlags(cmd *cobra.Command, names ...string) {
+	for _, name := range names {
+		if err := cmd.MarkFlagRequired(name); err != nil {
+			panic(err)
+		}
+	}
 }
 
 func newSplitCmd() *cobra.Command {
@@ -60,11 +73,7 @@ func newSplitCmd() *cobra.Command {
 	cmd.Flags().IntVar(&threshold, "threshold", 0, "Shares needed to unlock (K)")
 	cmd.Flags().StringSliceVar(&holders, "holders", nil, "Share holder labels, one Share each (N)")
 	cmd.Flags().StringVar(&outDir, "out-dir", ".", "directory for the Share files and "+ManifestFile)
-	for _, name := range []string{"threshold", "holders"} {
-		if err := cmd.MarkFlagRequired(name); err != nil {
-			panic(err)
-		}
-	}
+	requireFlags(cmd, "threshold", "holders")
 	return cmd
 }
 
@@ -123,11 +132,7 @@ func newSealCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&manifestPath, "manifest", "", "Ceremony Manifest")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Sealed Bundle to write")
-	for _, name := range []string{"manifest", "output"} {
-		if err := cmd.MarkFlagRequired(name); err != nil {
-			panic(err)
-		}
-	}
+	requireFlags(cmd, "manifest", "output")
 	return cmd
 }
 

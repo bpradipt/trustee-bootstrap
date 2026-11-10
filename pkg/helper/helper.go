@@ -4,12 +4,15 @@ package helper
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
@@ -54,23 +57,70 @@ func (c CDH) SharePayload(ctx context.Context) (ceremony.SharePayload, error) {
 	return p, nil
 }
 
+// State is the Bootstrap Helper's place in its state machine (spec §5).
+type State string
+
+// States a status request can observe.
+const (
+	StateCollecting State = "COLLECTING"
+	StatePublished  State = "PUBLISHED"
+	StateFailed     State = "FAILED"
+)
+
+// Status is the body of GET /bootstrap/v1/status. It holds no secrets.
+type Status struct {
+	BootID    string `json:"boot_id"`
+	KeyID     string `json:"key_id"`
+	State     State  `json:"state"`
+	Threshold int    `json:"threshold"`
+	Accepted  []int  `json:"accepted"`
+}
+
 // Helper is one boot's Bootstrap Helper.
 type Helper struct {
 	manifest ceremony.Manifest
 	bundle   []byte
 	out      string
 	cdh      CDH
+	bootID   string
+	relayMu  sync.Mutex    // held by the one open relay
+	done     chan struct{} // closed on leaving COLLECTING
+
+	mu       sync.Mutex // guards the fields below
+	state    State
 	shares   [][]byte
+	accepted []int
 }
 
 // New returns a Helper for the Ceremony Manifest and Sealed Bundle bytes.
 // It asks cdh for Share payloads and publishes the unsealed tree into out.
 func New(manifest, bundle []byte, out string, cdh CDH) (*Helper, error) {
-	h := &Helper{bundle: bundle, out: out, cdh: cdh}
+	h := &Helper{
+		bundle:   bundle,
+		out:      out,
+		cdh:      cdh,
+		bootID:   rand.Text(),
+		done:     make(chan struct{}),
+		state:    StateCollecting,
+		accepted: []int{},
+	}
 	if err := json.Unmarshal(manifest, &h.manifest); err != nil {
 		return nil, fmt.Errorf("parse ceremony manifest: %w", err)
 	}
 	return h, nil
+}
+
+// Status reports the helper's progress.
+func (h *Helper) Status() Status {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return Status{
+		BootID:    h.bootID,
+		KeyID:     h.manifest.KeyID,
+		State:     h.state,
+		Threshold: h.manifest.Threshold,
+		Accepted:  slices.Clone(h.accepted),
+	}
 }
 
 // CollectShare fetches one Share payload from the CDH and counts it. Once
@@ -80,11 +130,23 @@ func (h *Helper) CollectShare(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.state != StateCollecting {
+		return false, fmt.Errorf("unlock already ended: %s", h.state)
+	}
 	h.shares = append(h.shares, p.Share)
+	h.accepted = append(h.accepted, p.Index)
 	if len(h.shares) < h.manifest.Threshold {
 		return false, nil
 	}
-	return true, h.publish()
+	err = h.publish()
+	h.state = StatePublished
+	if err != nil {
+		h.state = StateFailed
+	}
+	close(h.done)
+	return err == nil, err
 }
 
 // publish unseals into a staging directory beside out, marks it complete,
