@@ -54,6 +54,7 @@ setup() {
 	tb ceremony split --threshold 2 --holders alice,bob,carol --out-dir "$work/ceremony" >/dev/null
 	echo 'package policy' >"$work/tree/resource.rego"
 	bundle_sha256=$(tb seal --manifest "$work/ceremony/ceremony.json" --output "$work/files/bundle.age" "$work/tree")
+	manifest_sha256=$(sha256sum "$work/ceremony/ceremony.json" | cut -d" " -f1)
 	cp "$work/ceremony/ceremony.json" "$work/bin/bootstrap-helper" "$work/files/"
 
 	cat >"$work/bin/kbs" <<-EOF
@@ -92,7 +93,7 @@ helper_pod() {
 		  containers:
 		  - name: helper
 		    image: $PROBE_IMAGE
-		    command: ["sh", "-euc", "cd /tmp && for f in bootstrap-helper ceremony.json bundle.age; do wget -q http://$gw:$FILES_PORT/\$f; done && chmod +x bootstrap-helper && exec ./bootstrap-helper --manifest ceremony.json --bundle bundle.age --out /tmp/trustee --listen :8080 --proxy-port 8081"]
+		    command: ["sh", "-euc", "cd /tmp && for f in bootstrap-helper ceremony.json bundle.age; do wget -q http://$gw:$FILES_PORT/\$f; done && chmod +x bootstrap-helper && exec ./bootstrap-helper --manifest ceremony.json --manifest-sha256 $manifest_sha256 --bundle bundle.age --out /tmp/trustee --listen :8080 --proxy-port 8081"]
 		---
 		apiVersion: v1
 		kind: Service

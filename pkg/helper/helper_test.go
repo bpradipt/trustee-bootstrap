@@ -2,12 +2,15 @@ package helper_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
@@ -61,15 +64,21 @@ func ceremonyFixture(t *testing.T) (manifest, bundle []byte, payloads []ceremony
 		t.Fatal(err)
 	}
 	for _, f := range files {
-		payloads = append(payloads, ceremony.SharePayload{ShareFile: f})
+		payloads = append(payloads, ceremony.SharePayload{ShareFile: f, BundleSHA256: digest(b.Bytes())})
 	}
 	return manifest, b.Bytes(), payloads
+}
+
+// digest is the hex SHA-256 that --manifest-sha256 and bundle_sha256 carry.
+func digest(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func newHelper(t *testing.T, manifest, bundle []byte, cdh helper.CDH) (*helper.Helper, string) {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "trustee")
-	h, err := helper.New(manifest, bundle, out, cdh)
+	h, err := helper.New(manifest, digest(manifest), bundle, out, cdh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +159,10 @@ func TestBadShareRejectedAndReported(t *testing.T) {
 		},
 		{name: "index not in manifest", mutate: func(p *ceremony.SharePayload) { p.Index = 4 }, index: 4},
 		{name: "other key_id", mutate: func(p *ceremony.SharePayload) { p.KeyID = "00000000000000000000000000000000" }, index: 1},
+		// AT-09 and AT-10: the host mounts a bundle of its own, or an older
+		// one, so the bundle_sha256 that operators approved names another.
+		{name: "bundle_sha256 names another bundle", mutate: func(p *ceremony.SharePayload) { p.BundleSHA256 = digest([]byte("older")) }, index: 1},
+		{name: "no bundle_sha256", mutate: func(p *ceremony.SharePayload) { p.BundleSHA256 = "" }, index: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,8 +213,31 @@ func TestNewRejectsInvalidManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := helper.New(manifest, nil, t.TempDir(), fakeCDH(t)); err == nil {
+	if _, err := helper.New(manifest, digest(manifest), nil, t.TempDir(), fakeCDH(t)); err == nil {
 		t.Fatal("New accepted threshold 3 with 2 shares")
+	}
+}
+
+// AT-11: the helper fails in LOCKED when the mounted Ceremony Manifest is not
+// the one --manifest-sha256 pins, or when the host dropped the flag.
+func TestNewRejectsManifestDigestMismatch(t *testing.T) {
+	manifest, bundle, _ := ceremonyFixture(t)
+	other, _, _ := ceremonyFixture(t)
+	tests := []struct {
+		name   string
+		pinned string
+	}{
+		{"swapped ceremony.json", digest(other)},
+		{"--manifest-sha256 dropped", ""},
+		{"digest with a prefix", "sha256:" + digest(manifest)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := helper.New(manifest, tt.pinned, bundle, t.TempDir(), fakeCDH(t))
+			if err == nil || !strings.Contains(err.Error(), "does not match --manifest-sha256") {
+				t.Fatalf("New = %v, want a manifest digest mismatch", err)
+			}
+		})
 	}
 }
 
@@ -214,7 +250,7 @@ func TestCDHErrorIsReturned(t *testing.T) {
 }
 
 func TestNewRejectsBadManifest(t *testing.T) {
-	if _, err := helper.New([]byte("{"), nil, t.TempDir(), fakeCDH(t)); err == nil {
+	if _, err := helper.New([]byte("{"), digest([]byte("{")), nil, t.TempDir(), fakeCDH(t)); err == nil {
 		t.Fatal("New accepted a malformed Ceremony Manifest")
 	}
 }

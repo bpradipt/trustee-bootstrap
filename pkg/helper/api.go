@@ -78,15 +78,25 @@ func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy 
 }
 
 // Serve serves the Helper API on l until the unlock ends, then stops. It
-// returns nil once the tree is published.
-func (h *Helper) Serve(l net.Listener, listenProxy func() (net.Listener, error)) error {
+// returns nil once the tree is published. A positive deadline discards the
+// accepted Shares and fails the unlock when it passes; zero means none. The
+// deadline is cleanup, not a security control: the host sets the guest clock.
+func (h *Helper) Serve(l net.Listener, listenProxy func() (net.Listener, error), deadline time.Duration) error {
 	srv := &http.Server{Handler: h.Handler(listenProxy), ReadHeaderTimeout: time.Minute}
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(l) }()
+	var expired <-chan time.Time // nil: never
+	if deadline > 0 {
+		t := time.NewTimer(deadline)
+		defer t.Stop()
+		expired = t.C
+	}
 	select {
 	case err := <-served:
 		return fmt.Errorf("serve Helper API: %w", err)
 	case <-h.done:
+	case <-expired:
+		h.expire()
 	}
 	srv.Close()
 	<-served
