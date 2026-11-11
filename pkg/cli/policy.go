@@ -48,7 +48,7 @@ func newPolicyBuildCmd() *cobra.Command {
 	cmd.Flags().StringVar(&initData, "init-data", "", "the reviewed Init-Data TOML")
 	cmd.Flags().StringVar(&refValues, "reference-values", "", `JSON reference values by name, e.g. {"trusted_aks": ["…"]}`)
 	cmd.Flags().StringSliceVar(&in.AcceptTEE, "accept-tee", nil, "TEE types to accept (tpm)")
-	cmd.Flags().StringVar(&in.BundleSHA256, "bundle-sha256", "", "hex SHA-256 of the Approved Bundle")
+	cmd.Flags().StringVar(&in.BundleSHA256, "bundle-sha256", "", "SHA-256 of the Approved Bundle, in lowercase hex as seal prints it")
 	cmd.Flags().StringVar(&manifestPath, "manifest", "", "Ceremony Manifest")
 	cmd.Flags().StringVar(&shareFile, "share-file", "", "your Share file")
 	cmd.Flags().StringVar(&outDir, "out-dir", "", "directory for the Operator Policy")

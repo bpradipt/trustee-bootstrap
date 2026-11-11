@@ -5,6 +5,8 @@
 #   image   the Bootstrap Helper image builds twice to the same digest
 #   AT-25   Security Operators reach the helper through its Service while the
 #   AT-13   pod is not Ready; two Shares of 2-of-3 unlock it and Trustee starts
+#   AT-11   with another ceremony.json in the ConfigMap, the helper fails
+#           in LOCKED under the same pod and policy
 #   policy  genpolicy's agent policy denies exec, and a pod whose helper args
 #           differ from the policy's does not start
 #   state   the memory state volume is a guest tmpfs that the host never sees
@@ -207,7 +209,9 @@ cvm_initdata() {
 # Operators review init.toml: the Init-Data that genpolicy wrote, policy and
 # all.
 render_pod() {
-	sed "s|@HELPER_IMAGE@|$helper_image|" "$examples/trustee-cvm.yaml" >"$work/trustee-cvm.yaml"
+	local manifest_sha256
+	manifest_sha256=$(sha256sum "$work/ceremony/ceremony.json" | cut -d' ' -f1)
+	sed "s|@HELPER_IMAGE@|$helper_image|; s|@MANIFEST_SHA256@|$manifest_sha256|" "$examples/trustee-cvm.yaml" >"$work/trustee-cvm.yaml"
 	"$gp/genpolicy" -y "$work/trustee-cvm.yaml" -p "$gp/rules.rego" -j "$gp" \
 		--initdata-path="$work/init-data.toml" --insecure-registry="$registry" >/dev/null
 	python3 - "$work/trustee-cvm.yaml" >"$work/init.toml" <<-'EOF'
@@ -368,6 +372,30 @@ check_tampered() {
 	info "policy: with --proxy-port changed, the agent refused to create the helper container"
 }
 
+# The same pod and policy, with another Key Ceremony's ceremony.json in the
+# manifest ConfigMap. The policy can't pin ConfigMap contents, so the helper
+# starts, and --manifest-sha256 makes it fail in LOCKED.
+check_swapped_manifest() {
+	kc delete pod "$POD" --wait >/dev/null
+	mkdir -p "$work/other"
+	tb ceremony split --threshold 2 --holders x,y --out-dir "$work/other" >/dev/null
+	eng cp "$work/other/ceremony.json" "$CLUSTER-control-plane:/tmp/trustee-cvm/other.json"
+	kc delete configmap trustee-ceremony-manifest >/dev/null
+	kc create configmap trustee-ceremony-manifest --from-file=ceremony.json=/tmp/trustee-cvm/other.json >/dev/null
+	kc apply -f - <"$work/trustee-cvm.yaml" >/dev/null
+	# The helper's exit code, now or before its last restart.
+	local codes='' exit1='(^| )1( |$)'
+	for _ in $(seq 150); do
+		codes=$(kc get pod "$POD" -o jsonpath='{.status.initContainerStatuses[0].state.terminated.exitCode} {.status.initContainerStatuses[0].lastState.terminated.exitCode}') || true
+		[[ $codes =~ $exit1 ]] && break
+		sleep 2
+	done
+	[[ $codes =~ $exit1 ]] || die "the helper did not fail with a swapped manifest: exit codes '$codes'; $(kc describe pod "$POD" | tail -10)"
+	tb status --endpoint "$endpoint" >/dev/null 2>&1 && die "the helper serves with a swapped manifest"
+	kc delete pod "$POD" --wait=false >/dev/null
+	info "AT-11: with another ceremony.json in the ConfigMap, the helper exited 1 in LOCKED"
+}
+
 main() {
 	trap cleanup EXIT
 	delete_objects --wait || true
@@ -388,6 +416,7 @@ main() {
 	check_host_view
 	check_workloads
 	check_tampered
+	check_swapped_manifest
 	check_tmpfs
 	info "PASS"
 }

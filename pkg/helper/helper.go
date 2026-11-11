@@ -5,6 +5,8 @@ package helper
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,13 +82,14 @@ type Status struct {
 
 // Helper is one boot's Bootstrap Helper.
 type Helper struct {
-	manifest ceremony.Manifest
-	bundle   []byte
-	out      string
-	cdh      CDH
-	bootID   string
-	relayMu  sync.Mutex    // held by the one open relay
-	done     chan struct{} // closed on leaving COLLECTING
+	manifest     ceremony.Manifest
+	bundle       []byte // the only copy of the Sealed Bundle the helper uses
+	bundleSHA256 string
+	out          string
+	cdh          CDH
+	bootID       string
+	relayMu      sync.Mutex    // held by the one open relay
+	done         chan struct{} // closed on leaving COLLECTING
 
 	mu       sync.Mutex // guards the fields below
 	state    State
@@ -95,18 +98,25 @@ type Helper struct {
 	rejected []int
 }
 
-// New returns a Helper for the Ceremony Manifest and Sealed Bundle bytes.
-// It asks cdh for Share payloads and publishes the unsealed tree into out.
-func New(manifest, bundle []byte, out string, cdh CDH) (*Helper, error) {
+// New is LOCKED (spec §5): it returns a Helper for the Ceremony Manifest and
+// Sealed Bundle bytes, read once from the untrusted mounts. The manifest must
+// hash to manifestSHA256, the hex digest that the Kata Agent policy pins in
+// --manifest-sha256. The Helper uses only these bytes from here on. It asks
+// cdh for Share payloads and publishes the unsealed tree into out.
+func New(manifest []byte, manifestSHA256 string, bundle []byte, out string, cdh CDH) (*Helper, error) {
+	if got := sha256Hex(manifest); got != manifestSHA256 {
+		return nil, fmt.Errorf("ceremony manifest sha256 %s does not match --manifest-sha256 %q", got, manifestSHA256)
+	}
 	h := &Helper{
-		bundle:   bundle,
-		out:      out,
-		cdh:      cdh,
-		bootID:   rand.Text(),
-		done:     make(chan struct{}),
-		state:    StateCollecting,
-		accepted: []int{},
-		rejected: []int{},
+		bundle:       bundle,
+		bundleSHA256: sha256Hex(bundle),
+		out:          out,
+		cdh:          cdh,
+		bootID:       rand.Text(),
+		done:         make(chan struct{}),
+		state:        StateCollecting,
+		accepted:     []int{},
+		rejected:     []int{},
 	}
 	if err := json.Unmarshal(manifest, &h.manifest); err != nil {
 		return nil, fmt.Errorf("parse ceremony manifest: %w", err)
@@ -180,7 +190,31 @@ func (h *Helper) check(p ceremony.SharePayload) error {
 	if ceremony.Commitment(p.Share) != commitment {
 		return errors.New("the Share does not match its Share Commitment")
 	}
+	if p.BundleSHA256 != h.bundleSHA256 {
+		return fmt.Errorf("bundle_sha256 %q is not the mounted Sealed Bundle's", p.BundleSHA256)
+	}
 	return nil
+}
+
+// expire ends COLLECTING when --deadline passes: it discards the accepted
+// Shares and fails.
+func (h *Helper) expire() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.state != StateCollecting {
+		return
+	}
+	for _, s := range h.shares {
+		clear(s)
+	}
+	h.shares = nil
+	h.state = StateFailed
+	close(h.done)
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // publish unseals into a staging directory beside out, marks it complete,

@@ -54,7 +54,7 @@ func startTrusteeCVM(t *testing.T, f unlockFixture, cvm *memnet.Network) string 
 		}
 	})
 	out := filepath.Join(t.TempDir(), "trustee")
-	h, err := helper.New(f.manifest, f.bundle, out, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}})
+	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}})
 	if err != nil {
 		t.Fatal(err)
 	}

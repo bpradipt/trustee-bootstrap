@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -77,8 +78,8 @@ func Build(in Input) (OperatorPolicy, error) {
 	if err := checkReferenceValues(in.ReferenceValues); err != nil {
 		return OperatorPolicy{}, err
 	}
-	if b, err := hex.DecodeString(in.BundleSHA256); err != nil || len(b) != sha256.Size {
-		return OperatorPolicy{}, fmt.Errorf("bundle digest %q is not a hex SHA-256", in.BundleSHA256)
+	if b, err := hex.DecodeString(in.BundleSHA256); err != nil || len(b) != sha256.Size || in.BundleSHA256 != strings.ToLower(in.BundleSHA256) {
+		return OperatorPolicy{}, fmt.Errorf("bundle digest %q is not a SHA-256 in 64 lowercase hex characters", in.BundleSHA256)
 	}
 	commitment, err := in.Manifest.CommitmentFor(in.Share.Index)
 	if err != nil {

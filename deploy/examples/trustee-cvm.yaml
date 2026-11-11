@@ -9,7 +9,10 @@
 #      kubectl create configmap trustee-sealed-bundle --from-file=bundle.age
 # 2. Replace @HELPER_IMAGE@ with the Bootstrap Helper image, pinned by
 #    digest (build it with cmd/bootstrap-helper/Containerfile).
-# 3. Run genpolicy (Kata 4.2.0) on this file with
+# 3. Replace @MANIFEST_SHA256@ with the hex SHA-256 of ceremony.json
+#    (`sha256sum ceremony.json`). The helper refuses to start when the
+#    mounted manifest has another digest or the arg is missing (ADR 0007).
+# 4. Run genpolicy (Kata 4.2.0) on this file with
 #    --initdata-path=init-data.toml. It adds the Kata Agent policy to the
 #    Init-Data and puts the Init-Data in the cc_init_data annotation. The
 #    policy pins both images, the helper's args and the mounts, and denies
@@ -32,6 +35,7 @@ spec:
       image: "@HELPER_IMAGE@"
       args:
         - --manifest=/bootstrap/manifest/ceremony.json
+        - --manifest-sha256=@MANIFEST_SHA256@
         - --bundle=/bootstrap/bundle/bundle.age
         - --out=/trustee/config
         - --listen=:8090

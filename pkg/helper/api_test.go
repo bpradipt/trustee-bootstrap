@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -14,7 +15,7 @@ import (
 )
 
 // serve runs h.Serve on an in-memory listener and returns its result channel.
-func serve(t *testing.T, h *helper.Helper) (<-chan error, *memnet.Network) {
+func serve(t *testing.T, h *helper.Helper, deadline time.Duration) (<-chan error, *memnet.Network) {
 	t.Helper()
 	var n memnet.Network
 	l, err := n.Listen("tcp", "helper:8080")
@@ -23,7 +24,7 @@ func serve(t *testing.T, h *helper.Helper) (<-chan error, *memnet.Network) {
 	}
 	served := make(chan error, 1)
 	go func() {
-		served <- h.Serve(l, func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") })
+		served <- h.Serve(l, func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") }, deadline)
 	}()
 	return served, &n
 }
@@ -40,6 +41,13 @@ func openRelay(t *testing.T, h *helper.Helper) websocket.StatusCode {
 	srv := &http.Server{Handler: h.Handler(func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") })}
 	go srv.Serve(l)
 	defer srv.Close()
+	return relayOn(t, &n)
+}
+
+// relayOn opens one relay to the Helper API at helper:8080 on n and returns
+// the code the helper closed it with.
+func relayOn(t *testing.T, n *memnet.Network) websocket.StatusCode {
+	t.Helper()
 	client := &http.Client{Transport: &http.Transport{DialContext: n.DialContext}}
 	ws, _, err := websocket.Dial(t.Context(), "http://helper:8080"+helper.RelayPath, &websocket.DialOptions{HTTPClient: client})
 	if err != nil {
@@ -79,7 +87,7 @@ func TestRelayClosesWithOutcome(t *testing.T) {
 func TestServeStopsOncePublished(t *testing.T) {
 	manifest, bundle, payloads := ceremonyFixture(t)
 	h, _ := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[1]))
-	served, n := serve(t, h)
+	served, n := serve(t, h, 0)
 
 	for range 2 {
 		if _, err := h.CollectShare(t.Context()); err != nil {
@@ -100,12 +108,34 @@ func TestServeStopsOncePublished(t *testing.T) {
 	}
 }
 
-// A bundle sealed to another Key Ceremony's recipient can't be opened.
+// AT-10, within one boot: with no --deadline, a Share released earlier stays
+// valid, and a later Share for the same bundle completes the unlock.
+func TestServeWithoutDeadlineKeepsAcceptedShares(t *testing.T) {
+	manifest, bundle, payloads := ceremonyFixture(t)
+	h, _ := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[1]))
+	served, n := serve(t, h, 0)
+
+	if got := relayOn(t, n); got != websocket.StatusNormalClosure {
+		t.Fatalf("relay closed with %v, want the Share accepted", got)
+	}
+	if published, err := h.CollectShare(t.Context()); err != nil || !published {
+		t.Fatalf("later Share: CollectShare = %v, %v; want published", published, err)
+	}
+	if err := <-served; err != nil {
+		t.Fatalf("Serve = %v, want nil once published", err)
+	}
+}
+
+// A bundle sealed to another Key Ceremony's recipient can't be opened, even
+// when the Shares name it.
 func TestServeFailsWhenUnsealFails(t *testing.T) {
 	manifest, _, payloads := ceremonyFixture(t)
-	_, otherBundle, _ := ceremonyFixture(t)
+	_, otherBundle, otherPayloads := ceremonyFixture(t)
+	for i := range payloads {
+		payloads[i].BundleSHA256 = otherPayloads[i].BundleSHA256
+	}
 	h, out := newHelper(t, manifest, otherBundle, fakeCDH(t, payloads[0], payloads[1]))
-	served, _ := serve(t, h)
+	served, _ := serve(t, h, 0)
 
 	if _, err := h.CollectShare(t.Context()); err != nil {
 		t.Fatal(err)
@@ -124,6 +154,30 @@ func TestServeFailsWhenUnsealFails(t *testing.T) {
 	}
 }
 
+// --deadline is cleanup: when it expires, the helper discards the Shares it
+// accepted and fails, and counts no Share after that.
+func TestServeDeadlineDiscardsShares(t *testing.T) {
+	manifest, bundle, payloads := ceremonyFixture(t)
+	h, out := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[1]))
+	if _, err := h.CollectShare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	served, _ := serve(t, h, time.Millisecond)
+
+	if err := <-served; err == nil {
+		t.Fatal("Serve = nil after the deadline")
+	}
+	if got := h.Status().State; got != helper.StateFailed {
+		t.Errorf("state = %s, want %s", got, helper.StateFailed)
+	}
+	if _, err := h.CollectShare(t.Context()); err == nil {
+		t.Error("CollectShare counted a Share after the deadline")
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Error("tree published after the deadline")
+	}
+}
+
 func TestServeFailsWhenListenerDies(t *testing.T) {
 	manifest, bundle, _ := ceremonyFixture(t)
 	h, _ := newHelper(t, manifest, bundle, fakeCDH(t))
@@ -133,7 +187,7 @@ func TestServeFailsWhenListenerDies(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Close()
-	if err := h.Serve(l, nil); err == nil {
+	if err := h.Serve(l, nil, 0); err == nil {
 		t.Fatal("Serve = nil on a closed listener")
 	}
 }

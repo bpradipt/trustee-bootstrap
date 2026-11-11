@@ -6,6 +6,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -17,39 +18,48 @@ import (
 // cdhURL is the sandbox CDH's get-resource API.
 const cdhURL = "http://127.0.0.1:8006"
 
+// maxFileSize caps the Ceremony Manifest and the Sealed Bundle (1 MiB): both
+// travel in a ConfigMap.
+const maxFileSize = 1048576
+
 func main() {
-	os.Exit(run(os.Args[1:], net.Listen))
+	os.Exit(run(os.Args[1:], net.Listen, http.DefaultClient))
 }
 
-// run starts the helper with listen standing in for net.Listen and returns
-// the exit code: 0 once the tree is published, 1 on any failure.
-func run(args []string, listen func(network, address string) (net.Listener, error)) int {
-	if err := serve(args, listen); err != nil {
+// run starts the helper with listen standing in for net.Listen and cdh as
+// the CDH's HTTP client, and returns the exit code: 0 once the tree is
+// published, 1 on any failure.
+func run(args []string, listen func(network, address string) (net.Listener, error), cdh *http.Client) int {
+	if err := serve(args, listen, cdh); err != nil {
 		fmt.Fprintln(os.Stderr, "bootstrap-helper:", err)
 		return 1
 	}
 	return 0
 }
 
-func serve(args []string, listen func(network, address string) (net.Listener, error)) error {
+func serve(args []string, listen func(network, address string) (net.Listener, error), cdh *http.Client) error {
 	fs := flag.NewFlagSet("bootstrap-helper", flag.ContinueOnError)
 	manifestPath := fs.String("manifest", "", "Ceremony Manifest (ceremony.json)")
+	manifestSHA256 := fs.String("manifest-sha256", "", "hex SHA-256 of the Ceremony Manifest; required")
 	bundlePath := fs.String("bundle", "", "Sealed Bundle")
 	out := fs.String("out", "", "directory to publish Trustee's config tree into")
 	addr := fs.String("listen", ":8080", "Helper API listen address")
 	proxyPort := fs.Int("proxy-port", 8081, "guest-loopback proxy port on 127.0.0.1: the KBS URL in Init-Data")
+	deadline := fs.Duration("deadline", 0, "discard accepted Shares and fail after this long; 0 means no deadline")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	manifest, err := os.ReadFile(*manifestPath)
+	// LOCKED: read each untrusted mount once. The host can swap the files at
+	// any time, so the helper never opens them again.
+	manifest, err := readCapped(*manifestPath)
 	if err != nil {
 		return fmt.Errorf("read ceremony manifest: %w", err)
 	}
-	bundle, err := os.ReadFile(*bundlePath)
+	bundle, err := readCapped(*bundlePath)
 	if err != nil {
 		return fmt.Errorf("read sealed bundle: %w", err)
 	}
-	h, err := helper.New(manifest, bundle, *out, helper.CDH{URL: cdhURL, Client: http.DefaultClient})
+	h, err := helper.New(manifest, *manifestSHA256, bundle, *out, helper.CDH{URL: cdhURL, Client: cdh})
 	if err != nil {
 		return err
 	}
@@ -58,5 +68,22 @@ func serve(args []string, listen func(network, address string) (net.Listener, er
 		return fmt.Errorf("listen: %w", err)
 	}
 	proxyAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(*proxyPort))
-	return h.Serve(l, func() (net.Listener, error) { return listen("tcp", proxyAddr) })
+	return h.Serve(l, func() (net.Listener, error) { return listen("tcp", proxyAddr) }, *deadline)
+}
+
+// readCapped reads the file at path, refusing one over maxFileSize.
+func readCapped(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxFileSize {
+		return nil, fmt.Errorf("%s is over %d bytes", path, maxFileSize)
+	}
+	return b, nil
 }
