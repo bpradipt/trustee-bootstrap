@@ -46,6 +46,40 @@ type SharePayload struct {
 	BundleSHA256 string `json:"bundle_sha256"`
 }
 
+// Validate rejects a Ceremony Manifest whose threshold is below 2 or above
+// its share count, or whose indices or Share Commitments repeat (spec §3).
+func (m Manifest) Validate() error {
+	if m.Threshold < 2 {
+		return fmt.Errorf("threshold %d is below 2", m.Threshold)
+	}
+	if m.Threshold > len(m.Shares) {
+		return fmt.Errorf("threshold %d is above the %d shares", m.Threshold, len(m.Shares))
+	}
+	indices := make(map[int]bool, len(m.Shares))
+	commitments := make(map[string]bool, len(m.Shares))
+	for _, s := range m.Shares {
+		if indices[s.Index] {
+			return fmt.Errorf("share index %d repeats", s.Index)
+		}
+		if commitments[s.Commitment] {
+			return fmt.Errorf("the Share Commitment of index %d repeats", s.Index)
+		}
+		indices[s.Index] = true
+		commitments[s.Commitment] = true
+	}
+	return nil
+}
+
+// CommitmentFor returns the Share Commitment of a share index.
+func (m Manifest) CommitmentFor(index int) (string, error) {
+	for _, s := range m.Shares {
+		if s.Index == index {
+			return s.Commitment, nil
+		}
+	}
+	return "", fmt.Errorf("the Ceremony Manifest has no share index %d", index)
+}
+
 // Commitment returns the Share Commitment of a Share.
 func Commitment(share []byte) string {
 	sum := sha256.Sum256(share)

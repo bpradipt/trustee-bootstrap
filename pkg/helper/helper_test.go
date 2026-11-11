@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
@@ -108,6 +109,99 @@ func TestOneShareStaysLocked(t *testing.T) {
 	}
 	if _, err := os.Stat(out); !os.IsNotExist(err) {
 		t.Error("tree published with one Share")
+	}
+}
+
+// AT-07: the same index delivered twice is counted once.
+func TestSameIndexTwiceCountedOnce(t *testing.T) {
+	manifest, bundle, payloads := ceremonyFixture(t)
+	h, out := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[0], payloads[2]))
+
+	if published, err := h.CollectShare(t.Context()); err != nil || published {
+		t.Fatalf("first Share: CollectShare = %v, %v; want counted, locked", published, err)
+	}
+	if published, err := h.CollectShare(t.Context()); err == nil || published {
+		t.Fatalf("repeated index: CollectShare = %v, %v; want rejected", published, err)
+	}
+	st := h.Status()
+	if !slices.Equal(st.Accepted, []int{1}) || !slices.Equal(st.Rejected, []int{1}) {
+		t.Fatalf("status accepted %v rejected %v; want [1] and [1]", st.Accepted, st.Rejected)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatal("tree published with one distinct Share")
+	}
+	if published, err := h.CollectShare(t.Context()); err != nil || !published {
+		t.Fatalf("second distinct Share: CollectShare = %v, %v; want published", published, err)
+	}
+}
+
+// AT-08 and the other COLLECTING checks: a rejected payload is not counted,
+// and its index is reported.
+func TestBadShareRejectedAndReported(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(p *ceremony.SharePayload)
+		index  int
+	}{
+		{
+			name:   "Share does not match its commitment",
+			mutate: func(p *ceremony.SharePayload) { p.Share = slices.Clone(p.Share); p.Share[0] ^= 1 },
+			index:  1,
+		},
+		{name: "index not in manifest", mutate: func(p *ceremony.SharePayload) { p.Index = 4 }, index: 4},
+		{name: "other key_id", mutate: func(p *ceremony.SharePayload) { p.KeyID = "00000000000000000000000000000000" }, index: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest, bundle, payloads := ceremonyFixture(t)
+			bad := payloads[0]
+			tt.mutate(&bad)
+			h, out := newHelper(t, manifest, bundle, fakeCDH(t, bad, payloads[1]))
+
+			if published, err := h.CollectShare(t.Context()); err == nil || published {
+				t.Fatalf("CollectShare = %v, %v; want rejected", published, err)
+			}
+			st := h.Status()
+			if len(st.Accepted) != 0 || !slices.Equal(st.Rejected, []int{tt.index}) {
+				t.Fatalf("status accepted %v rejected %v; want [] and [%d]", st.Accepted, st.Rejected, tt.index)
+			}
+			if published, err := h.CollectShare(t.Context()); err != nil || published {
+				t.Fatalf("one good Share after a rejected one: CollectShare = %v, %v; want locked", published, err)
+			}
+			if _, err := os.Stat(out); !os.IsNotExist(err) {
+				t.Fatal("rejected payload was counted")
+			}
+		})
+	}
+}
+
+func TestRejectedIndexReportedOnce(t *testing.T) {
+	manifest, bundle, payloads := ceremonyFixture(t)
+	bad := payloads[1]
+	bad.Index = 7
+	h, _ := newHelper(t, manifest, bundle, fakeCDH(t, bad, bad))
+	for range 2 {
+		if _, err := h.CollectShare(t.Context()); err == nil {
+			t.Fatal("CollectShare accepted index 7")
+		}
+	}
+	if got := h.Status().Rejected; !slices.Equal(got, []int{7}) {
+		t.Fatalf("rejected = %v, want [7]", got)
+	}
+}
+
+func TestNewRejectsInvalidManifest(t *testing.T) {
+	m, _, err := ceremony.Split(2, []string{"alice", "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Threshold = 3
+	manifest, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := helper.New(manifest, nil, t.TempDir(), fakeCDH(t)); err == nil {
+		t.Fatal("New accepted threshold 3 with 2 shares")
 	}
 }
 

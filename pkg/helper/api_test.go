@@ -100,11 +100,11 @@ func TestServeStopsOncePublished(t *testing.T) {
 	}
 }
 
-// Shares from another Key Ceremony rebuild a key that can't open the bundle.
+// A bundle sealed to another Key Ceremony's recipient can't be opened.
 func TestServeFailsWhenUnsealFails(t *testing.T) {
-	manifest, bundle, _ := ceremonyFixture(t)
-	_, _, otherPayloads := ceremonyFixture(t)
-	h, out := newHelper(t, manifest, bundle, fakeCDH(t, otherPayloads[0], otherPayloads[1]))
+	manifest, _, payloads := ceremonyFixture(t)
+	_, otherBundle, _ := ceremonyFixture(t)
+	h, out := newHelper(t, manifest, otherBundle, fakeCDH(t, payloads[0], payloads[1]))
 	served, _ := serve(t, h)
 
 	if _, err := h.CollectShare(t.Context()); err != nil {

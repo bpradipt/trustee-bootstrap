@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -74,6 +75,7 @@ type Status struct {
 	State     State  `json:"state"`
 	Threshold int    `json:"threshold"`
 	Accepted  []int  `json:"accepted"`
+	Rejected  []int  `json:"rejected"`
 }
 
 // Helper is one boot's Bootstrap Helper.
@@ -90,6 +92,7 @@ type Helper struct {
 	state    State
 	shares   [][]byte
 	accepted []int
+	rejected []int
 }
 
 // New returns a Helper for the Ceremony Manifest and Sealed Bundle bytes.
@@ -103,9 +106,13 @@ func New(manifest, bundle []byte, out string, cdh CDH) (*Helper, error) {
 		done:     make(chan struct{}),
 		state:    StateCollecting,
 		accepted: []int{},
+		rejected: []int{},
 	}
 	if err := json.Unmarshal(manifest, &h.manifest); err != nil {
 		return nil, fmt.Errorf("parse ceremony manifest: %w", err)
+	}
+	if err := h.manifest.Validate(); err != nil {
+		return nil, fmt.Errorf("ceremony manifest: %w", err)
 	}
 	return h, nil
 }
@@ -120,11 +127,14 @@ func (h *Helper) Status() Status {
 		State:     h.state,
 		Threshold: h.manifest.Threshold,
 		Accepted:  slices.Clone(h.accepted),
+		Rejected:  slices.Clone(h.rejected),
 	}
 }
 
-// CollectShare fetches one Share payload from the CDH and counts it. Once
-// threshold Shares are in, it unseals and publishes the tree and returns true.
+// CollectShare fetches one Share payload from the CDH and counts it if it
+// passes the COLLECTING checks. A rejected payload is not counted, and its
+// index is reported in status and in the returned error. Once threshold
+// Shares are in, it unseals and publishes the tree and returns true.
 func (h *Helper) CollectShare(ctx context.Context) (bool, error) {
 	p, err := h.cdh.SharePayload(ctx)
 	if err != nil {
@@ -134,6 +144,12 @@ func (h *Helper) CollectShare(ctx context.Context) (bool, error) {
 	defer h.mu.Unlock()
 	if h.state != StateCollecting {
 		return false, fmt.Errorf("unlock already ended: %s", h.state)
+	}
+	if err := h.check(p); err != nil {
+		if !slices.Contains(h.rejected, p.Index) {
+			h.rejected = append(h.rejected, p.Index)
+		}
+		return false, fmt.Errorf("reject Share index %d: %w", p.Index, err)
 	}
 	h.shares = append(h.shares, p.Share)
 	h.accepted = append(h.accepted, p.Index)
@@ -147,6 +163,24 @@ func (h *Helper) CollectShare(ctx context.Context) (bool, error) {
 	}
 	close(h.done)
 	return err == nil, err
+}
+
+// check applies the COLLECTING checks (spec §5) to a Share payload.
+func (h *Helper) check(p ceremony.SharePayload) error {
+	if p.KeyID != h.manifest.KeyID {
+		return fmt.Errorf("key_id %q does not match the Ceremony Manifest", p.KeyID)
+	}
+	commitment, err := h.manifest.CommitmentFor(p.Index)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(h.accepted, p.Index) {
+		return errors.New("index already accepted")
+	}
+	if ceremony.Commitment(p.Share) != commitment {
+		return errors.New("the Share does not match its Share Commitment")
+	}
+	return nil
 }
 
 // publish unseals into a staging directory beside out, marks it complete,
