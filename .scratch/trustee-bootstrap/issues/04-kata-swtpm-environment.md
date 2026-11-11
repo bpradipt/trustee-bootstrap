@@ -8,7 +8,7 @@
 
 **Spec:** §7 Platforms, §9 Phase 0.
 
-- [ ] The same script works on a KVM-capable Linux host and in a CI runner. *(KVM host: yes. CI runner: not run. Ticket 07 added the workflow, but the repo has no remote to run it on. See Comments.)*
+- [x] The same script works on a KVM-capable Linux host and in a CI runner. *(KVM host: the scratch VM. CI runner: GitHub `ubuntu-24.04`, [run 43072432012](https://github.com/bpradipt/trustee-bootstrap/actions/runs/43072432012), cold build 20 min. The runner needed the rootful calls to drop `XDG_RUNTIME_DIR`; see commit "Keep rootful podman out of the user's crun directory".)*
 - [x] A test pod's AA produces TPM evidence that the pinned Trustee TPM verifier accepts.
 - [x] The Init-Data digest shows in the verifier's claims (expected: PCR8 = `sha256(0³² ‖ digest)`).
 - [x] The ticket records what the TPM verifier requires for AK/EK trust.
