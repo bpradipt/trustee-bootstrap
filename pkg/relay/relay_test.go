@@ -173,7 +173,6 @@ func TestGuestEndsRelayOnBadFrame(t *testing.T) {
 		{"text message", websocket.MessageText, []byte{2, 0, 0, 0, 0, 0, 0, 0, 1}},
 		{"unknown type", websocket.MessageBinary, []byte{4, 0, 0, 0, 0, 0, 0, 0, 1}},
 		{"OPEN from the operator", websocket.MessageBinary, []byte{1, 0, 0, 0, 0, 0, 0, 0, 1}},
-		{"DATA over 64 KiB", websocket.MessageBinary, append([]byte{2, 0, 0, 0, 0, 0, 0, 0, 1}, make([]byte, 64<<10+1)...)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -83,7 +83,6 @@ func TestOperatorEndsRelayOnFramingViolation(t *testing.T) {
 		{"conn_id repeats", opens(1, 1), 1},
 		{"conn_id goes back", opens(2, 1), 1},
 		{"ninth connection", opens(1, 2, 3, 4, 5, 6, 7, 8, 9), 8},
-		{"DATA over 64 KiB", [][]byte{frame(1, 1), frame(2, 1, make([]byte, 64<<10+1)...)}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,6 +101,39 @@ func TestOperatorEndsRelayOnFramingViolation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The WebSocket read limit is the 64 KiB DATA cap: the library refuses an
+// oversized frame with 1009 before buffering it, so a relay holder can't
+// make either side hold a huge message in memory. Both sides set it.
+func TestOversizedFrameEndsRelayWithMessageTooBig(t *testing.T) {
+	big := frame(2, 1, make([]byte, 64<<10+1)...) // header + 64 KiB + 1
+	// synctest skips the close handshake's wait on a fake clock.
+	t.Run("operator", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			guestWS, _, done := operator(t, relay.DefaultLimits())
+			_, ended := drain(t.Context(), guestWS)
+			send(t, guestWS, frame(1, 1), big)
+			if err := <-ended; websocket.CloseStatus(err) != websocket.StatusMessageTooBig {
+				t.Errorf("relay ended with %v, want 1009 message too big", err)
+			}
+			<-done
+		})
+	})
+	t.Run("guest", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			guestWS, operatorWS := wsPair(t)
+			var cvm memnet.Network
+			done := make(chan error, 1)
+			go func() { done <- relay.Guest(t.Context(), guestWS, listen(t, &cvm, proxyAddr), relay.DefaultLimits()) }()
+			_, ended := drain(t.Context(), operatorWS)
+			send(t, operatorWS, big)
+			if err := <-ended; websocket.CloseStatus(err) != websocket.StatusMessageTooBig {
+				t.Errorf("relay ended with %v, want 1009 message too big", err)
+			}
+			<-done
+		})
+	})
 }
 
 // The full 64 KiB DATA payload and 8 connections stay within the limits.
