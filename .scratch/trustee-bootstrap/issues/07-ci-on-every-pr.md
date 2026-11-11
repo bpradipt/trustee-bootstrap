@@ -9,7 +9,7 @@
 **Spec:** §9 Phase 2, §11.
 
 - [x] A PR runs the Go gate, the Go tests and the swtpm end-to-end test. *(The baseline PR's [run 43072432012](https://github.com/bpradipt/trustee-bootstrap/actions/runs/43072432012) passed both jobs: `go` in 8.5 min, `e2e` in 25 min with a cold build. The first run, 43067508239, failed on two real bugs, fixed in "Build with Go 1.26.4 in CI" and "Keep rootful podman out of the user's crun directory".)*
-- [ ] A deliberately broken PR fails CI. *(Locally, each `ci.sh` step exits 1 on a broken tree. A real broken PR is still owed. See Comments.)*
+- [x] A deliberately broken PR fails CI. *([PR #2](https://github.com/bpradipt/trustee-bootstrap/pull/2) added one test that always fails. Its [run 43077109005](https://github.com/bpradipt/trustee-bootstrap/actions/runs/43077109005) failed the `go` job at `go vet and go test`. The PR was closed unmerged.)*
 
 ## Comments
 
@@ -58,5 +58,4 @@ Repeat (scripts in the session scratchpad, `t07/vm-*.sh`): `vmsync <worktree> t0
 
 ### Not done
 
-- **Deliberately broken PR.** The clean PR passed on GitHub (run 43072432012): `/dev/kvm` and rootful podman work on the hosted runner, and the cold build fits the timeout. A PR from the `ci-red-check` branch, which adds one failing test, still has to show red.
 - **Branch protection** is a repository setting. `docs/ci.md` says what to require.
