@@ -92,7 +92,7 @@ setup() {
 	# A rootful engine: the KBS container runs as host root.
 	mkdir -p "$work/rootful"
 	if [[ $CLI_ENGINE == podman ]]; then
-		printf '#!/bin/sh\nexec sudo %s "$@"\n' "$(command -v podman)" >"$work/rootful/podman"
+		printf '#!/bin/sh\nexec sudo env -u XDG_RUNTIME_DIR %s "$@"\n' "$(command -v podman)" >"$work/rootful/podman"
 		chmod +x "$work/rootful/podman"
 	fi
 }

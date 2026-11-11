@@ -47,7 +47,11 @@ info() { echo "[kind-kata-swtpm] $*" >&2; }
 die() { echo "[kind-kata-swtpm] ERROR: $*" >&2; exit 1; }
 
 # Root for the container engine. kind needs a rootful engine for /dev/kvm.
-eng() { if [[ $ENGINE == podman ]]; then sudo podman "$@"; else docker "$@"; fi; }
+# rootsudo drops XDG_RUNTIME_DIR: where sudo keeps it (GitHub runners),
+# root's crun would create $XDG_RUNTIME_DIR/crun as root and break the
+# user's rootless podman afterwards.
+rootsudo() { sudo env -u XDG_RUNTIME_DIR "$@"; }
+eng() { if [[ $ENGINE == podman ]]; then rootsudo podman "$@"; else docker "$@"; fi; }
 node() { eng exec -i "$CLUSTER-control-plane" "$@"; }
 
 # clone_at <url> <tag> <commit> <dir> [sparse paths...]
@@ -166,7 +170,7 @@ kind() {
 		echo "$KIND_SHA256  $bin.tmp" | sha256sum -c --quiet
 		chmod +x "$bin.tmp" && mv "$bin.tmp" "$bin"
 	fi
-	if [[ $ENGINE == podman ]]; then sudo KIND_EXPERIMENTAL_PROVIDER=podman "$bin" "$@"; else "$bin" "$@"; fi
+	if [[ $ENGINE == podman ]]; then rootsudo KIND_EXPERIMENTAL_PROVIDER=podman "$bin" "$@"; else "$bin" "$@"; fi
 }
 
 kc() { node kubectl --kubeconfig=/etc/kubernetes/admin.conf "$@"; }
