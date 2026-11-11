@@ -12,6 +12,10 @@
 #                     image (test/e2e/profiles), then the swtpm end-to-end
 #                     tests: kind-kata-swtpm.sh up, share-release.sh and
 #                     trustee-cvm.sh, then down
+#   ci.sh needs-e2e BASE
+#                     prints e2e=false when every file changed since BASE
+#                     is documentation (docs/, .scratch/ or *.md), and
+#                     e2e=true otherwise
 #
 # e2e needs what kind-kata-swtpm.sh needs: /dev/kvm, sudo, apt-get, rootful
 # podman, about 8 GB of disk and network access. A cold run builds for about
@@ -78,6 +82,19 @@ lint() {
 		--ignore '**/*_test.go,**/tests/**,**/testdata/**,**/target/**,**/vendor/**' --reporters console .
 }
 
+# needs_e2e <base>: a documentation-only change skips the e2e job. An empty
+# diff or a diff that fails runs it, so the skip can't hide a code change.
+needs_e2e() {
+	local files
+	if ! files=$(git diff --name-only "$1" HEAD) || [[ -z $files ]]; then
+		echo e2e=true
+	elif printf '%s\n' "$files" | grep -qvE '^(docs/|\.scratch/)|\.md$'; then
+		echo e2e=true
+	else
+		echo e2e=false
+	fi
+}
+
 # release <dir> [version]: build each binary as the helper image does, then
 # describe it with an SBOM read from the module data the binary carries.
 release() {
@@ -101,6 +118,7 @@ go)
 	;;
 release) release "${2:?usage: $0 release DIR [VERSION]}" "${3:-}" ;;
 lint) lint "${2:?usage: $0 lint BASE}" ;;
+needs-e2e) needs_e2e "${2:?usage: $0 needs-e2e BASE}" ;;
 e2e)
 	# trustee-cvm.sh builds the helper image with podman.
 	export E2E_ENGINE=podman
@@ -115,7 +133,7 @@ e2e)
 	"$e2e/trustee-cvm.sh"
 	;;
 *)
-	echo "usage: $0 go | lint BASE | release DIR [VERSION] | e2e" >&2
+	echo "usage: $0 go | lint BASE | release DIR [VERSION] | e2e | needs-e2e BASE" >&2
 	exit 2
 	;;
 esac
