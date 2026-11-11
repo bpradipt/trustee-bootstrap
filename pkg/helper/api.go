@@ -31,20 +31,20 @@ const (
 
 // Handler serves the Helper API. For each relay it opens the guest-loopback
 // proxy with listenProxy, asks the CDH for one Share through it, then closes
-// the relay with the outcome.
-func (h *Helper) Handler(listenProxy func() (net.Listener, error)) http.Handler {
+// the relay with the outcome. limits bound each relay.
+func (h *Helper) Handler(listenProxy func() (net.Listener, error), limits relay.Limits) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+StatusPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(h.Status())
 	})
 	mux.HandleFunc("GET "+RelayPath, func(w http.ResponseWriter, r *http.Request) {
-		h.serveRelay(w, r, listenProxy)
+		h.serveRelay(w, r, listenProxy, limits)
 	})
 	return mux
 }
 
-func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy func() (net.Listener, error)) {
+func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy func() (net.Listener, error), limits relay.Limits) {
 	if !h.relayMu.TryLock() {
 		http.Error(w, "a relay is already open", http.StatusConflict)
 		return
@@ -64,7 +64,7 @@ func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy 
 	defer cancel()
 	relayed := make(chan struct{})
 	go func() {
-		relay.Guest(ctx, ws, proxy)
+		relay.Guest(ctx, ws, proxy, limits)
 		cancel() // a dropped relay abandons the CDH call
 		close(relayed)
 	}()
@@ -81,8 +81,9 @@ func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy 
 // returns nil once the tree is published. A positive deadline discards the
 // accepted Shares and fails the unlock when it passes; zero means none. The
 // deadline is cleanup, not a security control: the host sets the guest clock.
-func (h *Helper) Serve(l net.Listener, listenProxy func() (net.Listener, error), deadline time.Duration) error {
-	srv := &http.Server{Handler: h.Handler(listenProxy), ReadHeaderTimeout: time.Minute}
+// limits bound each relay.
+func (h *Helper) Serve(l net.Listener, listenProxy func() (net.Listener, error), deadline time.Duration, limits relay.Limits) error {
+	srv := &http.Server{Handler: h.Handler(listenProxy, limits), ReadHeaderTimeout: time.Minute}
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(l) }()
 	var expired <-chan time.Time // nil: never

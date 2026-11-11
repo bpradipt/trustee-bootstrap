@@ -179,6 +179,23 @@ func TestRunServesOnListenAddress(t *testing.T) {
 	}
 }
 
+// The relay limits can be lowered, never disabled: the helper refuses zero or
+// negative limits before it listens.
+func TestRunRefusesDisabledRelayLimits(t *testing.T) {
+	f := fixture(t)
+	for _, flag := range []string{"--relay-idle-timeout=0", "--relay-total-timeout=-1s", "--relay-total-timeout=121s"} {
+		var listened []string
+		listen := func(_, address string) (net.Listener, error) {
+			listened = append(listened, address)
+			return nil, errors.New("listen refused")
+		}
+		args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", t.TempDir(), flag}
+		if code := run(args, listen, fakeCDH(t)); code != 1 || len(listened) != 0 {
+			t.Errorf("%s: run exited %d after listening on %v, want 1 before listening", flag, code, listened)
+		}
+	}
+}
+
 func TestRunFailsAtDeadline(t *testing.T) {
 	f := fixture(t)
 	var n memnet.Network

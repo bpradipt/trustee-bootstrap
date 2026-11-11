@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/relay"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
 )
 
@@ -48,7 +49,13 @@ func serve(args []string, listen func(network, address string) (net.Listener, er
 	addr := fs.String("listen", ":8080", "Helper API listen address")
 	proxyPort := fs.Int("proxy-port", 8081, "guest-loopback proxy port on 127.0.0.1: the KBS URL in Init-Data")
 	deadline := fs.Duration("deadline", 0, "discard accepted Shares and fail after this long; 0 means no deadline")
+	limits := relay.DefaultLimits()
+	fs.DurationVar(&limits.Idle, "relay-idle-timeout", limits.Idle, "end a relay after this long with no traffic; may be lowered, not raised")
+	fs.DurationVar(&limits.Total, "relay-total-timeout", limits.Total, "end a relay after this long; may be lowered, not raised")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := limits.Check(); err != nil {
 		return err
 	}
 	if *out == "" {
@@ -78,7 +85,7 @@ func serve(args []string, listen func(network, address string) (net.Listener, er
 		return fmt.Errorf("listen: %w", err)
 	}
 	proxyAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(*proxyPort))
-	return h.Serve(l, func() (net.Listener, error) { return listen("tcp", proxyAddr) }, *deadline)
+	return h.Serve(l, func() (net.Listener, error) { return listen("tcp", proxyAddr) }, *deadline, limits)
 }
 
 // readCapped reads the file at path, refusing one over maxFileSize.

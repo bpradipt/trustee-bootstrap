@@ -1,6 +1,7 @@
 package helper_test
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/memnet"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/relay"
 )
 
 // serve runs h.Serve on an in-memory listener and returns its result channel.
@@ -24,7 +26,7 @@ func serve(t *testing.T, h *helper.Helper, deadline time.Duration) (<-chan error
 	}
 	served := make(chan error, 1)
 	go func() {
-		served <- h.Serve(l, func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") }, deadline)
+		served <- h.Serve(l, func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") }, deadline, relay.DefaultLimits())
 	}()
 	return served, &n
 }
@@ -38,7 +40,7 @@ func openRelay(t *testing.T, h *helper.Helper) websocket.StatusCode {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: h.Handler(func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") })}
+	srv := &http.Server{Handler: h.Handler(func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") }, relay.DefaultLimits())}
 	go srv.Serve(l)
 	defer srv.Close()
 	return relayOn(t, &n)
@@ -187,7 +189,49 @@ func TestServeFailsWhenListenerDies(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Close()
-	if err := h.Serve(l, nil, 0); err == nil {
+	if err := h.Serve(l, nil, 0, relay.DefaultLimits()); err == nil {
 		t.Fatal("Serve = nil on a closed listener")
+	}
+}
+
+// AT-19: while one relay is open, a second gets 409. The open relay still
+// ends at its idle limit.
+func TestSecondConcurrentRelayGetsConflict(t *testing.T) {
+	manifest, bundle, _, out := ceremonyFixture(t)
+	cdhCalled := make(chan struct{})
+	stalled := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(cdhCalled)
+		<-r.Context().Done() // the CDH never answers
+	})
+	h := newHelper(t, manifest, bundle, out, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{stalled}}})
+	var n memnet.Network
+	l, err := n.Listen("tcp", "helper:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := relay.Limits{Idle: 50 * time.Millisecond, Total: time.Minute}
+	srv := &http.Server{Handler: h.Handler(func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") }, limits)}
+	go srv.Serve(l)
+	defer srv.Close()
+
+	first := make(chan error, 1)
+	client := &http.Client{Transport: &http.Transport{DialContext: n.DialContext}}
+	go func() {
+		ws, _, err := websocket.Dial(t.Context(), "http://helper:8080"+helper.RelayPath, &websocket.DialOptions{HTTPClient: client})
+		if err != nil {
+			first <- err
+			return
+		}
+		_, _, err = ws.Read(t.Context())
+		first <- err
+	}()
+	<-cdhCalled
+	_, resp, err := websocket.Dial(t.Context(), "http://helper:8080"+helper.RelayPath, &websocket.DialOptions{HTTPClient: client})
+	if err == nil || resp == nil || resp.StatusCode != http.StatusConflict {
+		t.Errorf("second relay: %v, want 409", err)
+	}
+	var ce websocket.CloseError
+	if err := <-first; !errors.As(err, &ce) || ce.Reason != "relay idle" {
+		t.Errorf("first relay ended with %v, want the idle limit", err)
 	}
 }
