@@ -85,7 +85,7 @@ All formats are owned by one Go module in this repo (ADR 0001, ADR 0006).
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /bootstrap/v1/status` | Returns `{boot_id, key_id, state, threshold, accepted:[index…]}`. Contains no secrets. Rate-limited. |
+| `GET /bootstrap/v1/status` | Returns `{boot_id, key_id, state, threshold, accepted:[index…], rejected:[index…]}`. Contains no secrets. Rate-limited. |
 | `GET /bootstrap/v1/relay` | WebSocket upgrade. Only one relay may be open at a time; a second request gets `409`. Unauthenticated: squatting the relay is a DoS, which is out of scope (ADR 0003). |
 
 `boot_id` is 128 random bits drawn when the Bootstrap Helper starts. It is used only to correlate status and audit records. TLS in front of the Bootstrap Helper (Ingress, LoadBalancer, port-forward) is allowed, but it is not a security boundary. The CLI accepts both `http://` and `https://`, and `--port-forward` as a convenience.

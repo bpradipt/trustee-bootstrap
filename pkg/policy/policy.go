@@ -80,7 +80,7 @@ func Build(in Input) (OperatorPolicy, error) {
 	if b, err := hex.DecodeString(in.BundleSHA256); err != nil || len(b) != sha256.Size {
 		return OperatorPolicy{}, fmt.Errorf("bundle digest %q is not a hex SHA-256", in.BundleSHA256)
 	}
-	commitment, err := commitmentFor(in.Manifest, in.Share.Index)
+	commitment, err := in.Manifest.CommitmentFor(in.Share.Index)
 	if err != nil {
 		return OperatorPolicy{}, err
 	}
@@ -155,15 +155,6 @@ func checkReferenceValues(rv map[string][]string) error {
 		}
 	}
 	return nil
-}
-
-func commitmentFor(m ceremony.Manifest, index int) (string, error) {
-	for _, s := range m.Shares {
-		if s.Index == index {
-			return s.Commitment, nil
-		}
-	}
-	return "", fmt.Errorf("the Ceremony Manifest has no share index %d", index)
 }
 
 // tpmResourcePolicy is the tpm claim profile. The TPM attester extends PCR8
