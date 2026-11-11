@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -48,6 +49,14 @@ func serve(args []string, listen func(network, address string) (net.Listener, er
 	proxyPort := fs.Int("proxy-port", 8081, "guest-loopback proxy port on 127.0.0.1: the KBS URL in Init-Data")
 	deadline := fs.Duration("deadline", 0, "discard accepted Shares and fail after this long; 0 means no deadline")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *out == "" {
+		return errors.New("--out is required")
+	}
+	// A restart after the rename finds the published tree: nothing to do.
+	published, err := helper.Recover(*out)
+	if err != nil || published {
 		return err
 	}
 	// LOCKED: read each untrusted mount once. The host can swap the files at

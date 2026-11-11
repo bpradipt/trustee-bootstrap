@@ -14,6 +14,8 @@
 #   AT-17   a workload that pins Trustee's certificate (kbs_cert) gets the
 #   AT-24   sealed resource; one with other Init-Data is refused, so Trustee
 #           runs the sealed policy and not its built-in default
+#   AT-26   the Trustee container restarts and serves again from the
+#           published tree, with no new ceremony
 #
 # The helper image goes to a local registry on the kind gateway. The kind
 # node pulls it over plain HTTP (containerd hosts.toml), and so does the
@@ -51,7 +53,7 @@ tb() { "$work/bin/trustee-bootstrap" "$@"; }
 
 # delete_objects [--wait]: everything this test puts in the cluster.
 delete_objects() {
-	kc delete pod "$POD" tmpfs-probe workload-ok workload-other --ignore-not-found "${1:---wait=false}" >/dev/null 2>&1
+	kc delete pod "$POD" tmpfs-probe workload-ok workload-other workload-again --ignore-not-found "${1:---wait=false}" >/dev/null 2>&1
 	kc delete service "$HELPER_SVC" trustee --ignore-not-found >/dev/null 2>&1
 	kc delete configmap trustee-ceremony-manifest trustee-sealed-bundle --ignore-not-found >/dev/null 2>&1
 }
@@ -352,6 +354,30 @@ check_workloads() {
 	info "AT-24: a workload with other Init-Data was refused: the sealed policy rules, not KBS's default"
 }
 
+# AT-26: the KBS container dies and kubelet restarts it in the same sandbox.
+# The helper does not run again, and Trustee serves from the tree it
+# published, with no new Unlock Ceremony.
+check_trustee_restart() {
+	local id helper_runs restarts got
+	id=$(kc get pod "$POD" -o jsonpath='{.status.containerStatuses[0].containerID}')
+	helper_runs=$(kc get pod "$POD" -o jsonpath='{.status.initContainerStatuses[0].restartCount}')
+	node crictl stop "${id#containerd://}" >/dev/null || die "could not stop the Trustee container"
+	for _ in $(seq 90); do
+		restarts=$(kc get pod "$POD" -o jsonpath='{.status.containerStatuses[0].restartCount}')
+		[[ $restarts -ge 1 && $(ready) == True ]] && break
+		sleep 2
+	done
+	[[ $restarts -ge 1 && $(ready) == True ]] ||
+		die "Trustee did not come back: $(kc describe pod "$POD" | tail -10)"
+	[[ $(kc get pod "$POD" -o jsonpath='{.status.initContainerStatuses[0].restartCount}') == "$helper_runs" ]] ||
+		die "the helper ran again after the Trustee container restarted"
+	RESOURCE=$SECRET
+	got=$(run_probe workload-again "$authorized")
+	[[ $got == "$SECRET_VALUE" ]] || die "after the Trustee restart, the workload got '$got'"
+	kc delete pod workload-again --wait=false >/dev/null
+	info "AT-26: the Trustee container restarted and served the sealed resource from the published tree, with no new ceremony"
+}
+
 # The same pod and policy, with one helper arg changed.
 check_tampered() {
 	kc delete pod "$POD" --wait >/dev/null
@@ -415,6 +441,7 @@ main() {
 	check_policy
 	check_host_view
 	check_workloads
+	check_trustee_restart
 	check_tampered
 	check_swapped_manifest
 	check_tmpfs

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -231,18 +232,48 @@ func (h *Helper) publish() error {
 	if err != nil {
 		return err
 	}
-	staging := h.out + ".staging"
+	staging := stagingDir(h.out)
 	if err := stage(h.bundle, id, staging, h.out); err != nil {
 		return errors.Join(err, os.RemoveAll(staging))
 	}
-	if err := os.Rename(staging, h.out); err != nil {
-		return fmt.Errorf("publish tree: %w", err)
+	// The commit point: before it a restart wipes staging, after it a
+	// restart finds the marked tree.
+	if err := rename(staging, h.out); err != nil {
+		return errors.Join(fmt.Errorf("publish tree: %w", err), os.RemoveAll(staging))
+	}
+	if err := syncPath(filepath.Dir(h.out)); err != nil {
+		return fmt.Errorf("sync published tree: %w", err)
 	}
 	return nil
 }
 
+// rename is os.Rename; tests replace it to crash the helper at the commit
+// point.
+var rename = os.Rename
+
+func stagingDir(out string) string { return out + ".staging" }
+
+// Recover is the helper's first step on start (spec §5). It reports whether
+// out already holds the published tree: the completion marker inside it
+// proves the rename finished. If not, it wipes any staging directory a crash
+// left behind, so the new boot starts with nothing.
+func Recover(out string) (published bool, err error) {
+	_, err = os.Lstat(filepath.Join(out, CompletionMarker))
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("look for the published tree: %w", err)
+	}
+	if err := os.RemoveAll(stagingDir(out)); err != nil {
+		return false, fmt.Errorf("wipe leftover staging: %w", err)
+	}
+	return false, nil
+}
+
 // stage unseals bundle into staging and checks the tree as Trustee will see
-// it at out. A bundle sealed with stock age never had these checks.
+// it at out. A bundle sealed with stock age never had these checks. Then it
+// marks the tree complete and syncs every file and directory in it.
 func stage(bundle []byte, id age.Identity, staging, out string) error {
 	if err := seal.Unseal(bundle, id, staging); err != nil {
 		return err
@@ -253,5 +284,22 @@ func stage(bundle []byte, id age.Identity, staging, out string) error {
 	if err := os.WriteFile(filepath.Join(staging, CompletionMarker), nil, 0o600); err != nil {
 		return fmt.Errorf("write completion marker: %w", err)
 	}
+	if err := syncTree(staging); err != nil {
+		return fmt.Errorf("sync staging: %w", err)
+	}
 	return nil
+}
+
+// syncTree fsyncs dir and everything in it.
+func syncTree(dir string) error {
+	return filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
+		return errors.Join(err, syncPath(path))
+	})
+}
+
+// syncPath fsyncs one file or directory. If Open fails, f is nil, and the
+// nil File's methods return os.ErrInvalid.
+func syncPath(path string) error {
+	f, err := os.Open(path)
+	return errors.Join(err, f.Sync(), f.Close())
 }
