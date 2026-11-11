@@ -33,3 +33,8 @@ These come from `tcpdump` on the scratch VM during `test/e2e/share-release.sh` (
 - **Gate:** the Go gate against `trustee-bootstrap` PASS (golangci 0 issues, gremlins 21 killed / 0 lived / 0 not covered, jscpd no new clones). `go vet` and `go test ./...` pass locally. `go test -race -count=3 ./...` passes on the VM.
 - **VM e2e with the limits on:** `E2E_CACHE=~/t07/cache/e2e test/e2e/ci.sh e2e` from `~/t12/src` (rsync of this worktree) exited 0. share-release passed (AT-03 both Shares accepted, AT-04 denial released nothing, AT-06), and trustee-cvm passed (AT-13 real unlock, AT-25, AT-17, AT-24, AT-26, AT-11). Log: `~/t12/e2e.log` on the VM.
 - **Not changed:** a second relay opened right after the previous one closes can still get `409` (09-notes). That is the helper releasing its lock after the close handshake. A real `approve` starts the KBS first (~2 s), so the e2e never hits it.
+- Review fixes: `relay.Limits` has unexported fields now. `DefaultLimits` and `NewLimits` are the only ways
+  to set them, so the check runs once, at flag parsing; `Guest` and `Operator` no longer re-check. The zero
+  `Limits` ends a relay at once, so it can't disable the limits. `relay.LimitFlags` defines both flags once
+  for the helper and for `approve` (cobra adds them through `AddGoFlagSet`). The timing tests run under
+  `testing/synctest` (Go 1.25), so they no longer sleep.

@@ -28,7 +28,7 @@ func newPolicyBuildCmd() *cobra.Command {
 			if in.ReferenceValues, err = readJSONFile[map[string][]any](refValues, "reference values"); err != nil {
 				return err
 			}
-			if in.Manifest, err = readJSONFile[ceremony.Manifest](manifestPath, "ceremony manifest"); err != nil {
+			if in.Manifest, err = readJSONFile[ceremony.Manifest](manifestPath, "Ceremony Manifest"); err != nil {
 				return err
 			}
 			if in.Share, err = readJSONFile[ceremony.ShareFile](shareFile, "Share file"); err != nil {

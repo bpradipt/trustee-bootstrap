@@ -23,10 +23,6 @@ import (
 // cdhURL is the sandbox CDH's get-resource API.
 const cdhURL = "http://127.0.0.1:8006"
 
-// maxFileSize caps the Ceremony Manifest and the Sealed Bundle: both travel
-// in a ConfigMap.
-const maxFileSize = seal.MaxSize
-
 func main() {
 	os.Exit(run(os.Args[1:], net.Listen, http.DefaultClient))
 }
@@ -56,11 +52,11 @@ func serve(args []string, listen func(network, address string) (net.Listener, er
 	// any time, so the helper never opens them again.
 	manifest, err := readCapped(f.manifest)
 	if err != nil {
-		return fmt.Errorf("read ceremony manifest: %w", err)
+		return fmt.Errorf("read Ceremony Manifest: %w", err)
 	}
 	bundle, err := readCapped(f.bundle)
 	if err != nil {
-		return fmt.Errorf("read sealed bundle: %w", err)
+		return fmt.Errorf("read Sealed Bundle: %w", err)
 	}
 	h, err := helper.New(manifest, f.manifestSHA256, bundle, f.out, helper.CDH{URL: cdhURL, Client: cdh}, audit.New(os.Stderr))
 	if err != nil {
@@ -95,13 +91,12 @@ func parseFlags(args []string) (flags, error) {
 	fs.StringVar(&f.listen, "listen", ":8080", "Helper API listen address")
 	fs.IntVar(&f.proxyPort, "proxy-port", 8081, "guest-loopback proxy port on 127.0.0.1: the KBS URL in Init-Data")
 	fs.DurationVar(&f.deadline, "deadline", 0, "discard accepted Shares and fail after this long; 0 means no deadline")
-	f.limits = relay.DefaultLimits()
-	fs.DurationVar(&f.limits.Idle, "relay-idle-timeout", f.limits.Idle, "end a relay after this long with no traffic; may be lowered, not raised")
-	fs.DurationVar(&f.limits.Total, "relay-total-timeout", f.limits.Total, "end a relay after this long; may be lowered, not raised")
+	limits := relay.LimitFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return f, err
 	}
-	if err := f.limits.Check(); err != nil {
+	var err error
+	if f.limits, err = limits(); err != nil {
 		return f, err
 	}
 	if f.out.Dir == "" {
@@ -115,19 +110,20 @@ func parseFlags(args []string) (flags, error) {
 	return f, nil
 }
 
-// readCapped reads the file at path, refusing one over maxFileSize.
+// readCapped reads the file at path, refusing one over seal.MaxSize: the
+// Ceremony Manifest and the Sealed Bundle both travel in a ConfigMap.
 func readCapped(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
+	b, err := io.ReadAll(io.LimitReader(f, seal.MaxSize+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(b) > maxFileSize {
-		return nil, fmt.Errorf("%s is over %d bytes", path, maxFileSize)
+	if len(b) > seal.MaxSize {
+		return nil, fmt.Errorf("%s is over %d bytes", path, seal.MaxSize)
 	}
 	return b, nil
 }

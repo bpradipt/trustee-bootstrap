@@ -2,8 +2,6 @@ package helper_test
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"log/slog"
@@ -74,19 +72,13 @@ func sealedFixture(t *testing.T, tree, out string) (manifest, bundle []byte, pay
 		t.Fatal(err)
 	}
 	for _, f := range files {
-		payloads = append(payloads, ceremony.SharePayload{ShareFile: f, BundleSHA256: digest(b.Bytes())})
+		payloads = append(payloads, ceremony.SharePayload{ShareFile: f, BundleSHA256: ceremony.SHA256Hex(b.Bytes())})
 	}
 	return manifest, b.Bytes(), payloads, out
 }
 
 // discard drops the audit records of tests that do not read them.
 var discard = slog.New(slog.DiscardHandler)
-
-// digest is the hex SHA-256 that --manifest-sha256 and bundle_sha256 carry.
-func digest(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
-}
 
 // owned is out, owned by the test's own UID and GID: the only owner a
 // test that is not root can hand the tree to.
@@ -96,7 +88,7 @@ func owned(out string) helper.Output {
 
 func newHelper(t *testing.T, manifest, bundle []byte, out string, cdh helper.CDH) *helper.Helper {
 	t.Helper()
-	h, err := helper.New(manifest, digest(manifest), bundle, owned(out), cdh, discard)
+	h, err := helper.New(manifest, ceremony.SHA256Hex(manifest), bundle, owned(out), cdh, discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +230,7 @@ func TestBadShareRejectedAndReported(t *testing.T) {
 		{name: "other key_id", mutate: func(p *ceremony.SharePayload) { p.KeyID = "00000000000000000000000000000000" }, index: 1},
 		// AT-09 and AT-10: the host mounts a bundle of its own, or an older
 		// one, so the bundle_sha256 that operators approved names another.
-		{name: "bundle_sha256 names another bundle", mutate: func(p *ceremony.SharePayload) { p.BundleSHA256 = digest([]byte("older")) }, index: 1},
+		{name: "bundle_sha256 names another bundle", mutate: func(p *ceremony.SharePayload) { p.BundleSHA256 = ceremony.SHA256Hex([]byte("older")) }, index: 1},
 		{name: "no bundle_sha256", mutate: func(p *ceremony.SharePayload) { p.BundleSHA256 = "" }, index: 1},
 	}
 	for _, tt := range tests {
@@ -290,7 +282,7 @@ func TestNewRejectsInvalidManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := helper.New(manifest, digest(manifest), nil, owned(t.TempDir()), fakeCDH(t), discard); err == nil {
+	if _, err := helper.New(manifest, ceremony.SHA256Hex(manifest), nil, owned(t.TempDir()), fakeCDH(t), discard); err == nil {
 		t.Fatal("New accepted threshold 3 with 2 shares")
 	}
 }
@@ -304,9 +296,9 @@ func TestNewRejectsManifestDigestMismatch(t *testing.T) {
 		name   string
 		pinned string
 	}{
-		{"swapped ceremony.json", digest(other)},
+		{"swapped ceremony.json", ceremony.SHA256Hex(other)},
 		{"--manifest-sha256 dropped", ""},
-		{"digest with a prefix", "sha256:" + digest(manifest)},
+		{"digest with a prefix", "sha256:" + ceremony.SHA256Hex(manifest)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -350,7 +342,7 @@ func TestCDHAnswerIsCapped(t *testing.T) {
 }
 
 func TestNewRejectsBadManifest(t *testing.T) {
-	if _, err := helper.New([]byte("{"), digest([]byte("{")), nil, owned(t.TempDir()), fakeCDH(t), discard); err == nil {
+	if _, err := helper.New([]byte("{"), ceremony.SHA256Hex([]byte("{")), nil, owned(t.TempDir()), fakeCDH(t), discard); err == nil {
 		t.Fatal("New accepted a malformed Ceremony Manifest")
 	}
 }
@@ -361,7 +353,7 @@ func TestNewRejectsBadManifest(t *testing.T) {
 func TestPublishedTreeIsTrustees(t *testing.T) {
 	manifest, bundle, payloads, out := ceremonyFixture(t)
 	trustee := helper.Output{Dir: out, UID: 4242, GID: 4243}
-	h, err := helper.New(manifest, digest(manifest), bundle, trustee, fakeCDH(t, payloads[0], payloads[1]), discard)
+	h, err := helper.New(manifest, ceremony.SHA256Hex(manifest), bundle, trustee, fakeCDH(t, payloads[0], payloads[1]), discard)
 	if err != nil {
 		t.Fatal(err)
 	}

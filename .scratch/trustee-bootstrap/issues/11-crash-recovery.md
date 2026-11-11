@@ -38,3 +38,6 @@
   returns `errors.Join(err, f.Sync(), f.Close())` with no branch; a nil `*os.File` returns `os.ErrInvalid`.
 - Not covered: a host crash between the rename and the parent fsync on a real disk. The rename can then be
   lost, and the restart wipes staging and asks for a new ceremony, which is the safe side.
+- Review fixes: a failed parent fsync after the rename now reports PUBLISHED with a `publish_unsynced`
+  audit warning, because a restart would find the marked tree. The `rename` package-var seam stays as
+  it is: the review flagged it, and a seam passed through `New` would widen the API for tests only.

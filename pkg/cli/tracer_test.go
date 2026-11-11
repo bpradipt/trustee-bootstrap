@@ -2,8 +2,6 @@ package cli_test
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -55,12 +53,6 @@ func readJSON(t *testing.T, path string, v any) []byte {
 		t.Fatal(err)
 	}
 	return b
-}
-
-// sha256Hex is the digest form of `seal`'s output and --manifest-sha256.
-func sha256Hex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
 }
 
 // serveInProcess is an http.RoundTripper that hands each request to a handler.
@@ -120,7 +112,7 @@ func keyCeremonyAndSeal(t *testing.T) unlockFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if digest != sha256Hex(bundle) {
+	if digest != ceremony.SHA256Hex(bundle) {
 		t.Errorf("seal printed %q, want the bundle's SHA-256", digest)
 	}
 
@@ -164,7 +156,7 @@ func assertNoIdentityOnDisk(t *testing.T, dir string) {
 func newHelper(t *testing.T, f unlockFixture, payloads ...ceremony.SharePayload) (*helper.Helper, string) {
 	t.Helper()
 	out := f.out
-	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, helper.Output{Dir: out, UID: os.Getuid(), GID: os.Getgid()}, fakeCDH(t, payloads...), audit.New(io.Discard))
+	h, err := helper.New(f.manifest, ceremony.SHA256Hex(f.manifest), f.bundle, helper.Output{Dir: out, UID: os.Getuid(), GID: os.Getgid()}, fakeCDH(t, payloads...), audit.New(io.Discard))
 	if err != nil {
 		t.Fatal(err)
 	}

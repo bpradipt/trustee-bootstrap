@@ -121,7 +121,7 @@ func newSealCmd() *cobra.Command {
 			"then tar and age-encrypt it to the Ceremony Manifest's recipient.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m, err := readJSONFile[ceremony.Manifest](manifestPath, "ceremony manifest")
+			m, err := readJSONFile[ceremony.Manifest](manifestPath, "Ceremony Manifest")
 			if err != nil {
 				return err
 			}

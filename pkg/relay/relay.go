@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"sync"
@@ -34,31 +35,44 @@ var (
 	errMalformedFrame = errors.New("relay: malformed frame")
 	errUnexpectedOpen = errors.New("relay: the guest side does not accept OPEN")
 	errConnOrder      = errors.New("relay: conn_id did not increase")
-	errTooManyConns   = errors.New("relay: over 8 inner connections")
+	errTooManyConns   = fmt.Errorf("relay: over %d inner connections", maxConns)
 )
 
 // Limits bound how long one relay stays open (spec §4). A deployment can
-// lower them but not raise or disable them.
+// lower them but not raise or disable them: DefaultLimits and NewLimits,
+// the only ways to set them, check that once. The zero Limits ends a relay
+// at once.
 type Limits struct {
-	Idle  time.Duration // longest time with no frame in either direction
-	Total time.Duration // longest time a relay stays open
+	idle  time.Duration // longest time with no frame in either direction
+	total time.Duration // longest time a relay stays open
 }
 
 // DefaultLimits returns the spec's limits: 30 s idle, 120 s total.
 func DefaultLimits() Limits {
-	return Limits{Idle: 30 * time.Second, Total: 120 * time.Second}
+	return Limits{idle: 30 * time.Second, total: 120 * time.Second}
 }
 
-// Check refuses a limit that is zero, negative or above its default.
-func (l Limits) Check() error {
+// NewLimits returns idle and total as Limits. It refuses a limit that is
+// zero, negative or above its default.
+func NewLimits(idle, total time.Duration) (Limits, error) {
 	maxLimits := DefaultLimits()
-	if l.Idle <= 0 || l.Idle > maxLimits.Idle {
-		return fmt.Errorf("relay idle timeout %v: want more than 0 and at most %v", l.Idle, maxLimits.Idle)
+	if idle <= 0 || idle > maxLimits.idle {
+		return Limits{}, fmt.Errorf("relay idle timeout %v: want more than 0 and at most %v", idle, maxLimits.idle)
 	}
-	if l.Total <= 0 || l.Total > maxLimits.Total {
-		return fmt.Errorf("relay total timeout %v: want more than 0 and at most %v", l.Total, maxLimits.Total)
+	if total <= 0 || total > maxLimits.total {
+		return Limits{}, fmt.Errorf("relay total timeout %v: want more than 0 and at most %v", total, maxLimits.total)
 	}
-	return nil
+	return Limits{idle: idle, total: total}, nil
+}
+
+// LimitFlags defines --relay-idle-timeout and --relay-total-timeout on fs,
+// for the Bootstrap Helper and for approve. Once fs is parsed, the returned
+// func gives the Limits they set, checked by NewLimits.
+func LimitFlags(fs *flag.FlagSet) func() (Limits, error) {
+	d := DefaultLimits()
+	idle := fs.Duration("relay-idle-timeout", d.idle, "end a relay after this long with no traffic; may be lowered, not raised")
+	total := fs.Duration("relay-total-timeout", d.total, "end a relay after this long; may be lowered, not raised")
+	return func() (Limits, error) { return NewLimits(*idle, *total) }
 }
 
 // Guest runs the Bootstrap Helper's side of one relay. It sends OPEN for each
@@ -66,14 +80,10 @@ func (l Limits) Check() error {
 // ws closes, ctx ends or a limit ends the relay. It closes proxy and every
 // inner connection before it returns.
 func Guest(ctx context.Context, ws *websocket.Conn, proxy net.Listener, limits Limits) error {
-	m, err := newMux(ws, limits)
-	if err != nil {
-		proxy.Close()
-		return err
-	}
+	m := newMux(ws, limits)
 	var accepting sync.WaitGroup
 	accepting.Go(func() { m.accept(ctx, proxy) })
-	err = m.read(ctx, func(uint64) error { return errUnexpectedOpen })
+	err := m.read(ctx, func(uint64) error { return errUnexpectedOpen })
 	proxy.Close()
 	accepting.Wait()
 	m.closeAll()
@@ -86,11 +96,8 @@ func Guest(ctx context.Context, ws *websocket.Conn, proxy net.Listener, limits L
 // relay breaks a limit, with the error that ended the relay;
 // websocket.CloseStatus reads the Bootstrap Helper's close code from it.
 func Operator(ctx context.Context, ws *websocket.Conn, dial func(context.Context) (net.Conn, error), limits Limits) error {
-	m, err := newMux(ws, limits)
-	if err != nil {
-		return err
-	}
-	err = m.read(ctx, func(id uint64) error {
+	m := newMux(ws, limits)
+	err := m.read(ctx, func(id uint64) error {
 		if err := m.open(ctx, id, nil); err != nil {
 			return err
 		}
@@ -121,15 +128,12 @@ type mux struct {
 	conn   net.Conn // inner connection id; nil once closed
 }
 
-func newMux(ws *websocket.Conn, limits Limits) (*mux, error) {
-	if err := limits.Check(); err != nil {
-		return nil, err
-	}
+func newMux(ws *websocket.Conn, limits Limits) *mux {
 	ws.SetReadLimit(headerLen + maxData)
-	m := &mux{ws: ws, idleTimeout: limits.Idle}
-	m.idle = time.AfterFunc(limits.Idle, func() { m.end("relay idle") })
-	m.total = time.AfterFunc(limits.Total, func() { m.end("relay open too long") })
-	return m, nil
+	m := &mux{ws: ws, idleTimeout: limits.idle}
+	m.idle = time.AfterFunc(limits.idle, func() { m.end("relay idle") })
+	m.total = time.AfterFunc(limits.total, func() { m.end("relay open too long") })
+	return m
 }
 
 // end closes the relay with reason. It closes the inner connection first, so

@@ -39,3 +39,6 @@
 - `ci.sh e2e` passed on the scratch VM: share-release PASS, and trustee-cvm PASS with the new AT-11 step. The
   agent policy pins the new arg, since the pod with it unlocked. To repeat: `vmsync <worktree> t09/src`, then
   on the VM `cd ~/t09/src && PATH=$HOME/sdk/go/bin:$PATH E2E_CACHE=$HOME/t07/cache/e2e test/e2e/ci.sh e2e`.
+- Review fixes: `helper.New` keeps its positional args. Grouping them (manifest, digest, bundle) into one
+  struct was a data-clump suggestion from the review, left out as a refactor with no behaviour change. The
+  output dir and Trustee's owner did move into `helper.Output`, because the owner flags needed a home.
