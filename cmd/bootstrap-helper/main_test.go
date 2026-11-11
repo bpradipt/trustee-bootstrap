@@ -144,6 +144,8 @@ func TestRunFailsWithExitOne(t *testing.T) {
 		{"--manifest-sha256 dropped", []string{"--manifest", f.manifest, "--bundle", f.bundle, "--out", out}},
 		{"swapped manifest", []string{"--manifest", f.manifest, "--manifest-sha256", sha256Hex([]byte("{}")), "--bundle", f.bundle, "--out", out}},
 		{"listen refused", []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", out}},
+		{"--out missing", []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle}},
+		{"--out is a file", []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", f.bundle}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -221,6 +223,45 @@ func TestRunUnsealsTheBundleReadInLocked(t *testing.T) {
 	}
 	if string(got) != "approved" {
 		t.Errorf("published bundle-name = %q, want the approved bundle's", got)
+	}
+}
+
+// AT-26: restarted after the rename, the helper finds the marked tree and
+// exits 0 at once, without reading the mounts or serving a ceremony.
+func TestRunExitsZeroWhenAlreadyPublished(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "trustee")
+	if err := os.Mkdir(out, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(out, helper.CompletionMarker), nil)
+	listen := func(string, string) (net.Listener, error) {
+		t.Error("the helper listened with the tree already published")
+		return nil, errors.New("no listening")
+	}
+	args := []string{"--manifest", "/gone/ceremony.json", "--bundle", "/gone/bundle.age", "--out", out}
+	if code := run(args, listen, fakeCDH(t)); code != 0 {
+		t.Errorf("run exited %d, want 0", code)
+	}
+}
+
+// AT-15: restarted before the rename, the helper wipes the staging tree the
+// crash left behind and starts over.
+func TestRunWipesLeftoverStaging(t *testing.T) {
+	f := fixture(t)
+	staging := f.out + ".staging"
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(staging, helper.CompletionMarker), nil)
+	refuse := func(string, string) (net.Listener, error) {
+		if _, err := os.Lstat(staging); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("staging at LOCKED: %v, want it gone", err)
+		}
+		return nil, errors.New("listen refused")
+	}
+	args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", f.out}
+	if code := run(args, refuse, fakeCDH(t)); code != 1 {
+		t.Errorf("run exited %d, want 1", code)
 	}
 }
 
