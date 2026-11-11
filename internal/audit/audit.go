@@ -15,6 +15,7 @@ const (
 	StateChanged    = "state_changed"    // helper: state; error on FAILED
 	ShareAccepted   = "share_accepted"   // helper: index, accepted
 	ShareRejected   = "share_rejected"   // helper: index, reason
+	PublishUnsynced = "publish_unsynced" // helper, a warning: renamed into place, but the fsync after failed; error
 	RelayOpened     = "relay_opened"     // helper and approve
 	RelayClosed     = "relay_closed"     // helper and approve: code, reason or error
 	VerifierStarted = "verifier_started" // approve: address

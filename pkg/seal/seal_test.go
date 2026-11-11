@@ -185,3 +185,30 @@ func TestUnsealRejectsMoreThanTheSizeCap(t *testing.T) {
 		t.Fatal("Unseal extracted more than the size cap")
 	}
 }
+
+// Seal refuses a tree whose Sealed Bundle would be over the 1 MiB size cap
+// (spec §3): the helper would refuse to read it.
+func TestSealRefusesABundleOverTheSizeCap(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "big"), make([]byte, seal.MaxSize), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	if err := seal.Seal(&b, dir, newIdentity(t).Recipient().String()); err == nil {
+		t.Fatalf("Seal wrote a %d-byte bundle", b.Len())
+	}
+}
+
+func TestCappedWriterTakesExactlyTheSizeCap(t *testing.T) {
+	var b bytes.Buffer
+	w := seal.CappedWriter(&b)
+	if _, err := w.Write(make([]byte, seal.MaxSize)); err != nil {
+		t.Fatalf("writing the size cap: %v", err)
+	}
+	if _, err := w.Write([]byte{0}); err == nil {
+		t.Fatal("the writer took a byte past the size cap")
+	}
+	if b.Len() != seal.MaxSize {
+		t.Errorf("wrote %d bytes, want %d", b.Len(), seal.MaxSize)
+	}
+}

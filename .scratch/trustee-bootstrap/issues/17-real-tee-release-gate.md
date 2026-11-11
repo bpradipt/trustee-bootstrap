@@ -11,3 +11,4 @@
 - [ ] Every acceptance test passes on the real TEE, including AT-16.
 - [ ] That TEE's claim profile is marked tested.
 - [ ] Security review notes record the actual trust roots, measurements and residual risks.
+- [ ] The run sets the attestation collateral source (Intel PCS or a PCCS, AMD KDS, or offline files) through Trustee's own settings in the generated Operator Verifier config (`pkg/verifier` `DefaultConfig`), and records which one it used. Today that config sets none (`docs/claim-profiles.md`, Attestation collateral).

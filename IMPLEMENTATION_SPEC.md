@@ -85,10 +85,10 @@ All formats are owned by one Go module in this repo (ADR 0001, ADR 0006).
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /bootstrap/v1/status` | Returns `{boot_id, key_id, state, threshold, accepted:[index…], rejected:[index…]}`. Contains no secrets. Rate-limited. |
+| `GET /bootstrap/v1/status` | Returns `{boot_id, key_id, state, threshold, accepted:[index…], rejected:[index…]}`. Contains no secrets. Rate-limited: 10 requests a second from all clients together, `429` beyond. |
 | `GET /bootstrap/v1/relay` | WebSocket upgrade. Only one relay may be open at a time; a second request gets `409`. Unauthenticated: squatting the relay is a DoS, which is out of scope (ADR 0003). |
 
-`boot_id` is 128 random bits drawn when the Bootstrap Helper starts. It is used only to correlate status and audit records. TLS in front of the Bootstrap Helper (Ingress, LoadBalancer, port-forward) is allowed, but it is not a security boundary. The CLI accepts both `http://` and `https://`, and `--port-forward` as a convenience.
+`boot_id` is 128 random bits drawn when the Bootstrap Helper starts. It is used only to correlate status and audit records. TLS in front of the Bootstrap Helper (Ingress, LoadBalancer, port-forward) is allowed, but it is not a security boundary. The CLI accepts both `http://` and `https://`. To go through `kubectl port-forward`, run it yourself and pass the local URL as `--endpoint`.
 
 ### One operator's flow
 
@@ -128,7 +128,7 @@ Operators run one after another. Each CDH call does a fresh RCAR with a fresh TE
 
 ## 5. Bootstrap Helper
 
-Flags: `--manifest`, `--manifest-sha256`, `--bundle`, `--out`, `--listen`, `--proxy-port`, an optional `--deadline`, and the relay limits `--relay-idle-timeout` and `--relay-total-timeout` (§4). All values are pinned by the Kata Agent policy. A missing or empty `--manifest-sha256` is fatal, because the policy lets the host drop args it can't change.
+Flags: `--manifest`, `--manifest-sha256`, `--bundle`, `--out`, `--owner-uid` and `--owner-gid` (Trustee's UID and GID, required, with no default), `--listen`, `--proxy-port`, an optional `--deadline`, and the relay limits `--relay-idle-timeout` and `--relay-total-timeout` (§4). All values are pinned by the Kata Agent policy. A missing or empty `--manifest-sha256` is fatal, because the policy lets the host drop args it can't change.
 
 ```text
 LOCKED -> COLLECTING -> UNSEALING -> PUBLISHED -> exit 0
@@ -151,7 +151,7 @@ any failure -> FAILED -> wipe staging -> exit 1   (no partial config, ever)
   - anything over the size cap.
 
   Then run the sealed-config checks (§3) on the staged tree. Wipe Shares and the key from memory on a best-effort basis.
-- **PUBLISHED:** `0700` directory, files no wider than `0600`, owned by Trustee's UID. Write the completion marker into the staging tree, fsync, then rename the staging directory into place atomically. The rename is the commit point: before it, a restart sees only staging and wipes it; after it, a restart sees the marked tree and exits 0. Then stop the listeners and exit 0.
+- **PUBLISHED:** `0700` directory, files no wider than `0600`, owned by Trustee's UID and GID (`--owner-uid`, `--owner-gid`). Write the completion marker into the staging tree, give the tree to that owner, fsync, then rename the staging directory into place atomically. The rename is the commit point: before it, a restart sees only staging and wipes it; after it, a restart sees the marked tree and exits 0. So a failure after the rename (the parent directory's fsync) still reports PUBLISHED, with an audit warning. Then stop the listeners and exit 0.
 - **Restarts.** If the helper restarts before publication, it draws a new `boot_id` and starts with an empty Share set; it never persists accepted Shares. If it restarts after the rename, the completion marker sends it straight to exit 0. A Trustee container restart reuses the published tree. Only pod or CVM recreation wipes the state volume and needs a new Unlock Ceremony (ADR 0002).
 
 ## 6. CLI
@@ -161,8 +161,8 @@ This is one Cobra tree in `pkg/cli`, `NewTrusteeBootstrapCmd()`. `cococtl` mount
 | Command | Who | Does |
 |---|---|---|
 | `ceremony split --threshold K --holders a,b,c` | Ceremony Authority, air-gapped | Generates an age identity, splits it, writes the Share files and `ceremony.json`, and never writes the identity to disk |
-| `seal --manifest ceremony.json <dir>` | Infrastructure Operator, on the controlled sealing machine | Runs the sealed-config checks (§3), then tars and age-encrypts the directory and prints the bundle digest. Sealing with the stock `age` CLI skips the checks, though the Bootstrap Helper repeats them before publishing |
-| `policy build --init-data init.toml --reference-values rv.json --accept-tee tdx,snp --bundle-sha256 … --manifest ceremony.json --share-file my.share` | Security Operator | Computes the Init-Data digest itself, and writes the Operator Policy plus the generated KBS config, resource policy and RVPS values, using the claim profile of each accepted TEE type |
+| `seal --manifest ceremony.json --output bundle.age [--root DIR] <dir>` | Infrastructure Operator, on the controlled sealing machine | Runs the sealed-config checks (§3) on the tree as Trustee will see it at `--root` (default `/trustee/config`, the Bootstrap Helper's `--out`), then tars and age-encrypts it into `--output` and prints the bundle digest. It refuses a bundle over the 1 MiB size cap. Sealing with the stock `age` CLI skips the checks, though the Bootstrap Helper repeats them before publishing |
+| `policy build --init-data init.toml --reference-values rv.json --accept-tee tdx,snp --bundle-sha256 … --manifest ceremony.json --share-file my.share --out-dir DIR [--allow-untested-profiles]` | Security Operator | Computes the Init-Data digest itself, and writes the Operator Policy plus the generated KBS config, resource policy and RVPS values into `--out-dir`, using the claim profile of each accepted TEE type. A TEE type whose claim profile has passed no real-TEE run needs `--allow-untested-profiles`; the policy then records `"untested_profiles": true` and `approve` warns that it is not a production Operator Policy |
 | `approve --endpoint URL --policy DIR --share-file my.share [--kbs-binary PATH] [--relay-idle-timeout D] [--relay-total-timeout D]` | Security Operator | Runs the §4 flow. Success means "Share accepted", not "Trustee running" |
 | `status --endpoint URL` | Anyone | Prints the Bootstrap Helper's status |
 

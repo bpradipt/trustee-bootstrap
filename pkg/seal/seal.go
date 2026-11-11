@@ -17,13 +17,15 @@ import (
 	"filippo.io/age"
 )
 
-// Seal writes the Sealed Bundle of dir to dst, encrypted to recipient.
+// Seal writes the Sealed Bundle of dir to dst, encrypted to recipient. It
+// fails once the bundle grows past MaxSize, which the Bootstrap Helper would
+// refuse to read.
 func Seal(dst io.Writer, dir, recipient string) error {
 	r, err := age.ParseX25519Recipient(recipient)
 	if err != nil {
 		return fmt.Errorf("parse recipient: %w", err)
 	}
-	enc, err := age.Encrypt(dst, r)
+	enc, err := age.Encrypt(&capped{w: dst}, r)
 	if err != nil {
 		return fmt.Errorf("start encryption: %w", err)
 	}
@@ -44,6 +46,23 @@ func Seal(dst io.Writer, dir, recipient string) error {
 // (1 MiB): the bundle travels in a ConfigMap. age doesn't compress, but a
 // sparse tar entry can unpack larger than its bytes in the bundle.
 const MaxSize = 1048576
+
+// errTooLarge is a Sealed Bundle over the size cap.
+var errTooLarge = errors.New("the Sealed Bundle is over the 1 MiB size cap")
+
+// capped writes to w until the total would pass MaxSize, then fails.
+type capped struct {
+	w io.Writer
+	n int
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	c.n += len(p)
+	if c.n > MaxSize {
+		return 0, errTooLarge
+	}
+	return c.w.Write(p)
+}
 
 // Unseal decrypts bundle with id and extracts it into the new directory dst.
 // It refuses absolute paths, "..", any entry but a directory or a regular

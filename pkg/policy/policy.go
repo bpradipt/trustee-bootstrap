@@ -146,6 +146,10 @@ type OperatorPolicy struct {
 	KeyID           string           `json:"key_id"`
 	Index           int              `json:"index"`
 	Commitment      string           `json:"commitment"`
+	// UntestedProfiles marks a policy built with --allow-untested-profiles:
+	// it may accept a TEE type that no real-TEE run has passed on, so it is
+	// not a production Operator Policy.
+	UntestedProfiles bool `json:"untested_profiles"`
 	// ResourcePolicy is the Operator Verifier's KBS resource policy (Rego),
 	// kept in its own file for review.
 	ResourcePolicy string `json:"-"`
@@ -187,14 +191,15 @@ func Build(in Input) (OperatorPolicy, error) {
 		return OperatorPolicy{}, err
 	}
 	p := OperatorPolicy{
-		Version:         ceremony.Version,
-		AcceptTEE:       in.AcceptTEE,
-		InitDataSHA256:  hex.EncodeToString(digest[:]),
-		ReferenceValues: in.ReferenceValues,
-		BundleSHA256:    in.BundleSHA256,
-		KeyID:           in.Manifest.KeyID,
-		Index:           in.Share.Index,
-		Commitment:      commitment,
+		Version:          ceremony.Version,
+		AcceptTEE:        in.AcceptTEE,
+		InitDataSHA256:   hex.EncodeToString(digest[:]),
+		ReferenceValues:  in.ReferenceValues,
+		BundleSHA256:     in.BundleSHA256,
+		KeyID:            in.Manifest.KeyID,
+		Index:            in.Share.Index,
+		Commitment:       commitment,
+		UntestedProfiles: in.AllowUntested,
 	}
 	if err := p.CheckShare(in.Share); err != nil {
 		return OperatorPolicy{}, err

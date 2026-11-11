@@ -3,6 +3,7 @@ package policy_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -57,7 +58,7 @@ func TestBuildTPM(t *testing.T) {
 	want := policy.OperatorPolicy{
 		Version: 1, AcceptTEE: in.AcceptTEE, InitDataSHA256: p.InitDataSHA256, ReferenceValues: in.ReferenceValues,
 		BundleSHA256: in.BundleSHA256, KeyID: in.Manifest.KeyID, Index: 2, Commitment: in.Manifest.Shares[1].Commitment,
-		ResourcePolicy: p.ResourcePolicy,
+		UntestedProfiles: true, ResourcePolicy: p.ResourcePolicy,
 	}
 	if !reflect.DeepEqual(p, want) {
 		t.Errorf("Build = %+v\nwant %+v", p, want)
@@ -275,5 +276,28 @@ func TestWriteLoad(t *testing.T) {
 	}
 	if _, err := policy.Load(t.TempDir()); err == nil {
 		t.Error("Load of an empty directory succeeded")
+	}
+}
+
+// A policy built with --allow-untested-profiles says so in its file, for a
+// reviewer, and keeps saying so through Load.
+func TestUntestedProfilesAreMarked(t *testing.T) {
+	p, err := policy.Build(input(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.UntestedProfiles {
+		t.Error("UntestedProfiles = false for a policy built with AllowUntested")
+	}
+	dir := t.TempDir()
+	if err := policy.Write(dir, p); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, policy.PolicyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"untested_profiles": true`) {
+		t.Errorf("%s has no untested_profiles marker:\n%s", policy.PolicyFile, b)
 	}
 }

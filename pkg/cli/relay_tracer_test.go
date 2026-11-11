@@ -59,7 +59,7 @@ func startTrusteeCVM(t *testing.T, f unlockFixture, cvm *memnet.Network, auditLo
 		}
 	})
 	out := f.out
-	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}}, audit.New(auditLog))
+	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, helper.Output{Dir: out, UID: os.Getuid(), GID: os.Getgid()}, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}}, audit.New(auditLog))
 	if err != nil {
 		t.Fatal(err)
 	}

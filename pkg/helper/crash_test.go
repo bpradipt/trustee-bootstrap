@@ -1,11 +1,14 @@
 package helper_test
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
@@ -95,6 +98,41 @@ func TestCrashAfterRenameKeepsPublishedTree(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(out, name)); err != nil {
 			t.Errorf("published tree after the restart: %v", err)
 		}
+	}
+}
+
+// The parent directory's fsync fails after the rename. A restart would find
+// the marked tree, so status says PUBLISHED too, and the audit record keeps
+// the failure as a warning.
+func TestFailedSyncAfterRenameStillPublishes(t *testing.T) {
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	parent, moved := filepath.Dir(out), filepath.Dir(out)+".moved"
+	helper.SetRename(t, func(oldpath, newpath string) error {
+		if err := os.Rename(oldpath, newpath); err != nil {
+			return err
+		}
+		return os.Rename(parent, moved) // the fsync can't open the parent
+	})
+	var records bytes.Buffer
+	h, err := helper.New(manifest, digest(manifest), bundle, owned(out), fakeCDH(t, payloads[0], payloads[1]), audit.New(&records))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.CollectShare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if published, err := h.CollectShare(t.Context()); !published || err != nil {
+		t.Fatalf("CollectShare = %v, %v; want the tree published", published, err)
+	}
+	if got := h.Status().State; got != helper.StatePublished {
+		t.Errorf("state = %s, want %s", got, helper.StatePublished)
+	}
+	if !strings.Contains(records.String(), `"level":"WARN","msg":"`+audit.PublishUnsynced+`"`) {
+		t.Errorf("no %s warning in the audit records:\n%s", audit.PublishUnsynced, records.String())
+	}
+	published, err := helper.Recover(filepath.Join(moved, filepath.Base(out)))
+	if err != nil || !published {
+		t.Fatalf("Recover = %v, %v; want the published tree found", published, err)
 	}
 }
 

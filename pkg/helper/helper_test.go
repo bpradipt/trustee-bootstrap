@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/trusteetest"
@@ -86,9 +88,15 @@ func digest(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// owned is out, owned by the test's own UID and GID: the only owner a
+// test that is not root can hand the tree to.
+func owned(out string) helper.Output {
+	return helper.Output{Dir: out, UID: os.Getuid(), GID: os.Getgid()}
+}
+
 func newHelper(t *testing.T, manifest, bundle []byte, out string, cdh helper.CDH) *helper.Helper {
 	t.Helper()
-	h, err := helper.New(manifest, digest(manifest), bundle, out, cdh, discard)
+	h, err := helper.New(manifest, digest(manifest), bundle, owned(out), cdh, discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +286,7 @@ func TestNewRejectsInvalidManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := helper.New(manifest, digest(manifest), nil, t.TempDir(), fakeCDH(t), discard); err == nil {
+	if _, err := helper.New(manifest, digest(manifest), nil, owned(t.TempDir()), fakeCDH(t), discard); err == nil {
 		t.Fatal("New accepted threshold 3 with 2 shares")
 	}
 }
@@ -298,7 +306,7 @@ func TestNewRejectsManifestDigestMismatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := helper.New(manifest, tt.pinned, bundle, t.TempDir(), fakeCDH(t), discard)
+			_, err := helper.New(manifest, tt.pinned, bundle, owned(t.TempDir()), fakeCDH(t), discard)
 			if err == nil || !strings.Contains(err.Error(), "does not match --manifest-sha256") {
 				t.Fatalf("New = %v, want a manifest digest mismatch", err)
 			}
@@ -315,7 +323,48 @@ func TestCDHErrorIsReturned(t *testing.T) {
 }
 
 func TestNewRejectsBadManifest(t *testing.T) {
-	if _, err := helper.New([]byte("{"), digest([]byte("{")), nil, t.TempDir(), fakeCDH(t), discard); err == nil {
+	if _, err := helper.New([]byte("{"), digest([]byte("{")), nil, owned(t.TempDir()), fakeCDH(t), discard); err == nil {
 		t.Fatal("New accepted a malformed Ceremony Manifest")
+	}
+}
+
+// The published tree belongs to Trustee's UID and GID, from --owner-uid and
+// --owner-gid. Only root can give a file away, so as another user the
+// helper fails the unlock rather than publish a tree Trustee can't own.
+func TestPublishedTreeIsTrustees(t *testing.T) {
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	trustee := helper.Output{Dir: out, UID: 4242, GID: 4243}
+	h, err := helper.New(manifest, digest(manifest), bundle, trustee, fakeCDH(t, payloads[0], payloads[1]), discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.CollectShare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	published, err := h.CollectShare(t.Context())
+	if os.Getuid() != 0 {
+		if published || err == nil {
+			t.Fatalf("CollectShare = %v, %v; want the chown refused", published, err)
+		}
+		return
+	}
+	if !published || err != nil {
+		t.Fatalf("CollectShare = %v, %v; want the tree published", published, err)
+	}
+	err = filepath.WalkDir(out, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if st := fi.Sys().(*syscall.Stat_t); st.Uid != 4242 || st.Gid != 4243 {
+			t.Errorf("%s is owned by %d:%d, want 4242:4243", path, st.Uid, st.Gid)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -5,8 +5,6 @@ package helper
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,12 +84,19 @@ type Status struct {
 	Rejected  []int  `json:"rejected"`
 }
 
+// Output is where the helper publishes Trustee's config tree, and who owns
+// it there: Trustee's UID and GID, pinned in --owner-uid and --owner-gid.
+type Output struct {
+	Dir      string
+	UID, GID int
+}
+
 // Helper is one boot's Bootstrap Helper.
 type Helper struct {
 	manifest     ceremony.Manifest
 	bundle       []byte // the only copy of the Sealed Bundle the helper uses
 	bundleSHA256 string
-	out          string
+	out          Output
 	cdh          CDH
 	bootID       string
 	audit        *slog.Logger  // audit records, each with boot_id and key_id
@@ -111,13 +116,13 @@ type Helper struct {
 // --manifest-sha256. The Helper uses only these bytes from here on. It asks
 // cdh for Share payloads, publishes the unsealed tree into out and writes
 // its audit records to log.
-func New(manifest []byte, manifestSHA256 string, bundle []byte, out string, cdh CDH, log *slog.Logger) (*Helper, error) {
-	if got := sha256Hex(manifest); got != manifestSHA256 {
+func New(manifest []byte, manifestSHA256 string, bundle []byte, out Output, cdh CDH, log *slog.Logger) (*Helper, error) {
+	if got := ceremony.SHA256Hex(manifest); got != manifestSHA256 {
 		return nil, fmt.Errorf("ceremony manifest sha256 %s does not match --manifest-sha256 %q", got, manifestSHA256)
 	}
 	h := &Helper{
 		bundle:       bundle,
-		bundleSHA256: sha256Hex(bundle),
+		bundleSHA256: ceremony.SHA256Hex(bundle),
 		out:          out,
 		cdh:          cdh,
 		bootID:       rand.Text(),
@@ -226,11 +231,6 @@ func (h *Helper) expire() {
 	close(h.done)
 }
 
-func sha256Hex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
-}
-
 // publish unseals into a staging directory beside out, runs the sealed-config
 // checks, marks it complete, then renames it into place. On failure it wipes
 // the staging directory.
@@ -242,17 +242,19 @@ func (h *Helper) publish() error {
 	if err != nil {
 		return err
 	}
-	staging := stagingDir(h.out)
+	staging := stagingDir(h.out.Dir)
 	if err := stage(h.bundle, id, staging, h.out); err != nil {
 		return errors.Join(err, os.RemoveAll(staging))
 	}
 	// The commit point: before it a restart wipes staging, after it a
 	// restart finds the marked tree.
-	if err := rename(staging, h.out); err != nil {
+	if err := rename(staging, h.out.Dir); err != nil {
 		return errors.Join(fmt.Errorf("publish tree: %w", err), os.RemoveAll(staging))
 	}
-	if err := syncPath(filepath.Dir(h.out)); err != nil {
-		return fmt.Errorf("sync published tree: %w", err)
+	// Past the commit point a restart finds the tree, so the unlock has
+	// succeeded whatever the sync says; the record keeps the failure.
+	if err := syncPath(filepath.Dir(h.out.Dir)); err != nil {
+		h.audit.Warn(audit.PublishUnsynced, audit.Error(err))
 	}
 	return nil
 }
@@ -283,21 +285,33 @@ func Recover(out string) (published bool, err error) {
 
 // stage unseals bundle into staging and checks the tree as Trustee will see
 // it at out. A bundle sealed with stock age never had these checks. Then it
-// marks the tree complete and syncs every file and directory in it.
-func stage(bundle []byte, id age.Identity, staging, out string) error {
+// marks the tree complete, hands it to Trustee's UID and GID and syncs every
+// file and directory in it.
+func stage(bundle []byte, id age.Identity, staging string, out Output) error {
 	if err := seal.Unseal(bundle, id, staging); err != nil {
 		return err
 	}
-	if err := verifier.CheckSealedConfig(staging, out); err != nil {
+	if err := verifier.CheckSealedConfig(staging, out.Dir); err != nil {
 		return fmt.Errorf("sealed-config checks: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(staging, CompletionMarker), nil, 0o600); err != nil {
 		return fmt.Errorf("write completion marker: %w", err)
 	}
+	if err := chownTree(staging, out.UID, out.GID); err != nil {
+		return fmt.Errorf("hand the tree to Trustee: %w", err)
+	}
 	if err := syncTree(staging); err != nil {
 		return fmt.Errorf("sync staging: %w", err)
 	}
 	return nil
+}
+
+// chownTree gives dir and everything in it to uid and gid. Unseal made
+// only directories and regular files, so no link is followed.
+func chownTree(dir string, uid, gid int) error {
+	return filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
+		return errors.Join(err, os.Lchown(path, uid, gid))
+	})
 }
 
 // syncTree fsyncs dir and everything in it.

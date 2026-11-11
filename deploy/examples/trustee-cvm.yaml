@@ -38,6 +38,10 @@ spec:
         - --manifest-sha256=@MANIFEST_SHA256@
         - --bundle=/bootstrap/bundle/bundle.age
         - --out=/trustee/config
+        # Trustee's UID and GID own the published tree. The KBS image sets
+        # no USER, so Trustee runs as root.
+        - --owner-uid=0
+        - --owner-gid=0
         - --listen=:8090
         - --proxy-port=8081
       ports:
