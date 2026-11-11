@@ -1,0 +1,74 @@
+{
+  "source": "deps/verifier/src/snp/mod.rs parse_tee_evidence",
+  "claims": {
+    "eat_profile": "tag:github.com,2023:veraison/ear",
+    "submods": {
+      "cpu0": {
+        "ear.status": "affirming",
+        "ear.trustworthiness-vector": {
+          "executables": 3,
+          "hardware": 2,
+          "configuration": 3
+        },
+        "ear.veraison.annotated-evidence": {
+          "init_data": "5e299da8ffeb6c18a63909ec004c9e56f7deae3af883ecba1e8ec9db3d2ec1f5",
+          "init_data_claims": {
+            "aa.toml": {
+              "token_configs": {
+                "kbs": {
+                  "url": "http://127.0.0.1:8081"
+                }
+              }
+            }
+          },
+          "runtime_data_claims": {
+            "tee-pubkey": {
+              "kty": "EC",
+              "crv": "P-256",
+              "alg": "ECDH-ES+A256KW",
+              "x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+              "y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+            }
+          },
+          "snp": {
+            "policy_abi_major": 0,
+            "policy_abi_minor": 31,
+            "policy_smt_allowed": true,
+            "policy_migrate_ma": false,
+            "policy_debug_allowed": false,
+            "policy_single_socket": false,
+            "reported_tcb_bootloader": 10,
+            "reported_tcb_tee": 0,
+            "reported_tcb_snp": 23,
+            "reported_tcb_microcode": 213,
+            "platform_tsme_enabled": false,
+            "platform_smt_enabled": true,
+            "measurement": "b5313ed8b071f40482923ced86d348cfa6d462428292ab1623f83a1afa0183558bc8e5a13042b9cc9629a0f022b038f3",
+            "chip_id": "f03f59d5551b964270abae0908a745bb2772f292eecfdfc2b6ea39892226757ef19575901dae7c0663dcb63ed76db009b3c3659cee57257baa39bae65da62918"
+          }
+        }
+      }
+    }
+  },
+  "deny": {
+    "wrong Init-Data": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/init_data": "bd7216c50f9de7872afe91d490d8bb83b309a8c83a07fd713cf68024b53ac6a7"
+    },
+    "debug on": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/snp/policy_debug_allowed": true
+    },
+    "not affirming": {
+      "/submods/cpu0/ear.status": "warning"
+    }
+  },
+  "required": [
+    "/submods/cpu0/ear.status",
+    "/submods/cpu0/ear.veraison.annotated-evidence/init_data",
+    "/submods/cpu0/ear.veraison.annotated-evidence/snp/policy_debug_allowed",
+    "/submods/cpu0/ear.veraison.annotated-evidence/snp/measurement",
+    "/submods/cpu0/ear.veraison.annotated-evidence/snp/reported_tcb_bootloader",
+    "/submods/cpu0/ear.veraison.annotated-evidence/snp/reported_tcb_microcode",
+    "/submods/cpu0/ear.veraison.annotated-evidence/snp/reported_tcb_snp",
+    "/submods/cpu0/ear.veraison.annotated-evidence/snp/reported_tcb_tee"
+  ]
+}

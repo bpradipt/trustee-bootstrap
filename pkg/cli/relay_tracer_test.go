@@ -168,7 +168,7 @@ func buildPolicy(t *testing.T, f unlockFixture, holder string) string {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "policy")
-	printed := mustRun(t, "policy", "build", "--init-data", initData, "--reference-values", rv, "--accept-tee", "tpm",
+	printed := mustRun(t, "policy", "build", "--init-data", initData, "--reference-values", rv, "--accept-tee", "tpm", "--allow-untested-profiles",
 		"--bundle-sha256", f.payloads[0].BundleSHA256, "--manifest", filepath.Join(f.ceremonyDir, cli.ManifestFile),
 		"--share-file", filepath.Join(f.ceremonyDir, holder+".share"), "--out-dir", out)
 	toml, err := os.ReadFile(initData)

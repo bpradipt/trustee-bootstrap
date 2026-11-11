@@ -5,8 +5,10 @@
 #   ci.sh go          go vet and go test
 #   ci.sh lint BASE   the Go gate's checks, with its pinned tools and
 #                     limits, on the changes since BASE
-#   ci.sh e2e         the swtpm end-to-end tests: kind-kata-swtpm.sh up,
-#                     share-release.sh and trustee-cvm.sh, then down
+#   ci.sh e2e         the claim-profile fixtures through the pinned KBS
+#                     image (test/e2e/profiles), then the swtpm end-to-end
+#                     tests: kind-kata-swtpm.sh up, share-release.sh and
+#                     trustee-cvm.sh, then down
 #
 # e2e needs what kind-kata-swtpm.sh needs: /dev/kvm, sudo, apt-get, rootful
 # podman, about 8 GB of disk and network access. A cold run builds for about
@@ -79,6 +81,8 @@ lint) lint "${2:?usage: $0 lint BASE}" ;;
 e2e)
 	# trustee-cvm.sh builds the helper image with podman.
 	export E2E_ENGINE=podman
+	# AT-28: only the matching evidence fixtures get a release.
+	go test -count=1 ./test/e2e/profiles -args -engine podman
 	trap '"$e2e/kind-kata-swtpm.sh" down' EXIT
 	"$e2e/kind-kata-swtpm.sh" up
 	"$e2e/share-release.sh"

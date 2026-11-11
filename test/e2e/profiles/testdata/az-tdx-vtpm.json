@@ -1,0 +1,84 @@
+{
+  "source": "deps/verifier/src/az_tdx_vtpm/mod.rs evaluate; tdx/claims.rs generate_parsed_claim; az_snp_vtpm/mod.rs extend_claim",
+  "claims": {
+    "eat_profile": "tag:github.com,2023:veraison/ear",
+    "submods": {
+      "cpu0": {
+        "ear.status": "affirming",
+        "ear.trustworthiness-vector": {
+          "executables": 3,
+          "hardware": 2,
+          "configuration": 2
+        },
+        "ear.veraison.annotated-evidence": {
+          "init_data": "2ae28ca047f6e6cf94110dba996b24d9c51cbc63963cd221cb794066b99589bc",
+          "init_data_claims": {
+            "aa.toml": {
+              "token_configs": {
+                "kbs": {
+                  "url": "http://127.0.0.1:8081"
+                }
+              }
+            }
+          },
+          "runtime_data_claims": {
+            "tee-pubkey": {
+              "kty": "EC",
+              "crv": "P-256",
+              "alg": "ECDH-ES+A256KW",
+              "x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+              "y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+            }
+          },
+          "az-tdx-vtpm": {
+            "quote": {
+              "header": {
+                "tee_type": "81000000",
+                "vendor_id": "939a7233f79c4ca9940a0db3957f0607"
+              },
+              "body": {
+                "mr_td": "fb2b54400987d6738fb073b581504db49402cb495cd2ea36ae3ce8f4589afa4de54281ca8047fa7a61e6f55d4dab8d14",
+                "xfam": "e702060000000000",
+                "td_attributes": "0000001000000000",
+                "mr_config_id": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+              }
+            },
+            "td_attributes": {
+              "debug": false,
+              "septve_disable": true,
+              "protection_keys": false,
+              "key_locker": false,
+              "perfmon": false
+            },
+            "tcb_status": "UpToDate",
+            "tpm": {
+              "pcr08": "2ae28ca047f6e6cf94110dba996b24d9c51cbc63963cd221cb794066b99589bc",
+              "pcr11": "0316a68e4d3d41ef1696ff7759e68c7539a37ec47d445ac2aa5cefc958b1925b"
+            }
+          }
+        }
+      }
+    }
+  },
+  "deny": {
+    "wrong Init-Data": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/init_data": "300bd4af80ffcf657c6253eac8dc590a1495a856b4c2936338b758fde416c19a",
+      "/submods/cpu0/ear.veraison.annotated-evidence/az-tdx-vtpm/tpm/pcr08": "300bd4af80ffcf657c6253eac8dc590a1495a856b4c2936338b758fde416c19a"
+    },
+    "debug on": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/az-tdx-vtpm/td_attributes/debug": true,
+      "/submods/cpu0/ear.veraison.annotated-evidence/az-tdx-vtpm/quote/body/td_attributes": "0100001000000000"
+    },
+    "not affirming": {
+      "/submods/cpu0/ear.status": "warning"
+    }
+  },
+  "required": [
+    "/submods/cpu0/ear.status",
+    "/submods/cpu0/ear.veraison.annotated-evidence/init_data",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-tdx-vtpm/td_attributes/debug",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-tdx-vtpm/tpm/pcr11",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-tdx-vtpm/quote/body/mr_td",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-tdx-vtpm/quote/body/xfam"
+  ]
+}

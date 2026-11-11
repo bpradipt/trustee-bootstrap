@@ -25,8 +25,15 @@ const (
 	ResourcePolicyFile = "resource-policy.rego"
 )
 
-// TEETPM is the TPM attester's TEE type. It is the only claim profile so far.
-const TEETPM = "tpm"
+// TEE types with a claim profile, named as Trustee v0.22.0 names them in
+// the EAR token's annotated evidence.
+const (
+	TEETPM       = "tpm"
+	TEETDX       = "tdx"
+	TEESNP       = "snp"
+	TEEAzSNPVTPM = "az-snp-vtpm"
+	TEEAzTDXVTPM = "az-tdx-vtpm"
+)
 
 // Reference values the tpm claim profile requires: the default AS policy
 // marks TPM evidence affirming only when its AK and PCR11 are among these.
@@ -34,6 +41,96 @@ const (
 	RefTrustedAKs = "trusted_aks"
 	RefTPMPCR11   = "tpm_pcr11"
 )
+
+// profile is one TEE type's claim profile at Trustee v0.22.0.
+// docs/claim-profiles.md cites the verifier source for every field.
+type profile struct {
+	// untested: no real-TEE run has passed on this TEE type's evidence.
+	// Fixtures derived from the verifier source and swtpm runs do not count
+	// (spec §11). Ticket 17's real-TEE run clears it for its TEE type.
+	untested bool
+	// initData is the init_data claim the verifier reports for an
+	// Init-Data digest.
+	initData func(digest [sha256.Size]byte) string
+	// debugOff is the Rego condition that the TEE is not in debug mode.
+	// TPM evidence has no debug state.
+	debugOff string
+	// refs are the reference values the default AS policy needs to mark
+	// the evidence affirming, each with the claim checked against it.
+	refs []ref
+}
+
+type ref struct{ name, claim string }
+
+var profiles = map[string]profile{
+	TEETPM: {
+		// Only swtpm so far, whose keys live on the host.
+		untested: true,
+		initData: pcr8,
+		refs:     []ref{{RefTrustedAKs, "evidence.tpm.ak_public"}, {RefTPMPCR11, "evidence.tpm.pcr11"}},
+	},
+	TEETDX: {
+		untested: true,
+		// MRCONFIGID is 48 bytes; the verifier pads the digest with zeros.
+		initData: func(d [sha256.Size]byte) string { return hex.EncodeToString(append(d[:], make([]byte, 16)...)) },
+		debugOff: "evidence.tdx.td_attributes.debug == false",
+		refs: []ref{
+			{"rtmr_1", "evidence.tdx.quote.body.rtmr_1"},
+			{"rtmr_2", "evidence.tdx.quote.body.rtmr_2"},
+			{"mr_td", "evidence.tdx.quote.body.mr_td"},
+			{"xfam", "evidence.tdx.quote.body.xfam"},
+		},
+	},
+	TEESNP: {
+		untested: true,
+		initData: func(d [sha256.Size]byte) string { return hex.EncodeToString(d[:]) },
+		debugOff: "evidence.snp.policy_debug_allowed == false",
+		refs: []ref{
+			{"snp_launch_measurement", "evidence.snp.measurement"},
+			{"snp_bootloader", "evidence.snp.reported_tcb_bootloader"},
+			{"snp_microcode", "evidence.snp.reported_tcb_microcode"},
+			{"snp_snp_svn", "evidence.snp.reported_tcb_snp"},
+			{"snp_tee_svn", "evidence.snp.reported_tcb_tee"},
+		},
+	},
+	TEEAzSNPVTPM: {
+		untested: true,
+		initData: pcr8,
+		// This verifier reports the SNP policy bits as strings.
+		debugOff: `evidence["az-snp-vtpm"].policy_debug_allowed == "false"`,
+		refs: []ref{
+			{"measurement", `evidence["az-snp-vtpm"].measurement`},
+			{"snp_pcr11", `evidence["az-snp-vtpm"].tpm.pcr11`},
+			{"tcb_bootloader", `evidence["az-snp-vtpm"].reported_tcb_bootloader`},
+			{"tcb_microcode", `evidence["az-snp-vtpm"].reported_tcb_microcode`},
+			{"tcb_snp", `evidence["az-snp-vtpm"].reported_tcb_snp`},
+			{"tcb_tee", `evidence["az-snp-vtpm"].reported_tcb_tee`},
+			{"smt_enabled", `evidence["az-snp-vtpm"].platform_smt_enabled`},
+			{"tsme_enabled", `evidence["az-snp-vtpm"].platform_tsme_enabled`},
+			{"abi_major", `evidence["az-snp-vtpm"].policy_abi_major`},
+			{"abi_minor", `evidence["az-snp-vtpm"].policy_abi_minor`},
+			{"single_socket", `evidence["az-snp-vtpm"].policy_single_socket`},
+			{"smt_allowed", `evidence["az-snp-vtpm"].policy_smt_allowed`},
+		},
+	},
+	TEEAzTDXVTPM: {
+		untested: true,
+		initData: pcr8,
+		debugOff: `evidence["az-tdx-vtpm"].td_attributes.debug == false`,
+		refs: []ref{
+			{"tdx_pcr11", `evidence["az-tdx-vtpm"].tpm.pcr11`},
+			{"mr_td", `evidence["az-tdx-vtpm"].quote.body.mr_td`},
+			{"xfam", `evidence["az-tdx-vtpm"].quote.body.xfam`},
+		},
+	},
+}
+
+// pcr8 is what a TPM or vTPM's PCR8 holds once the guest extends it with
+// the Init-Data digest: sha256(0^32 || digest).
+func pcr8(d [sha256.Size]byte) string {
+	v := sha256.Sum256(append(make([]byte, sha256.Size), d[:]...))
+	return hex.EncodeToString(v[:])
+}
 
 // OperatorPolicy is a Security Operator's own record of what they release
 // their Share to.
@@ -43,11 +140,12 @@ type OperatorPolicy struct {
 	// InitDataSHA256 is the hex SHA-256 of the reviewed Init-Data TOML.
 	InitDataSHA256 string `json:"init_data_sha256"`
 	// ReferenceValues are loaded into the Operator Verifier's RVPS by name.
-	ReferenceValues map[string][]string `json:"reference_values"`
-	BundleSHA256    string              `json:"bundle_sha256"`
-	KeyID           string              `json:"key_id"`
-	Index           int                 `json:"index"`
-	Commitment      string              `json:"commitment"`
+	// Values are JSON: SNP TCB versions are numbers.
+	ReferenceValues map[string][]any `json:"reference_values"`
+	BundleSHA256    string           `json:"bundle_sha256"`
+	KeyID           string           `json:"key_id"`
+	Index           int              `json:"index"`
+	Commitment      string           `json:"commitment"`
 	// ResourcePolicy is the Operator Verifier's KBS resource policy (Rego),
 	// kept in its own file for review.
 	ResourcePolicy string `json:"-"`
@@ -56,11 +154,14 @@ type OperatorPolicy struct {
 // Input is what `policy build` reads.
 type Input struct {
 	InitData        []byte // the reviewed Init-Data TOML, byte for byte
-	ReferenceValues map[string][]string
+	ReferenceValues map[string][]any
 	AcceptTEE       []string
-	BundleSHA256    string
-	Manifest        ceremony.Manifest
-	Share           ceremony.ShareFile
+	// AllowUntested lets the policy accept a TEE type whose claim profile
+	// is untested. Such a policy is not a production Operator Policy.
+	AllowUntested bool
+	BundleSHA256  string
+	Manifest      ceremony.Manifest
+	Share         ceremony.ShareFile
 }
 
 // refName is what the Operator Verifier's storage accepts as a key.
@@ -72,10 +173,10 @@ func Build(in Input) (OperatorPolicy, error) {
 	if err != nil {
 		return OperatorPolicy{}, err
 	}
-	if err := checkTEE(in.AcceptTEE); err != nil {
+	if err := checkTEE(in.AcceptTEE, in.AllowUntested); err != nil {
 		return OperatorPolicy{}, err
 	}
-	if err := checkReferenceValues(in.ReferenceValues); err != nil {
+	if err := checkReferenceValues(in.ReferenceValues, in.AcceptTEE); err != nil {
 		return OperatorPolicy{}, err
 	}
 	if b, err := hex.DecodeString(in.BundleSHA256); err != nil || len(b) != sha256.Size || in.BundleSHA256 != strings.ToLower(in.BundleSHA256) {
@@ -98,7 +199,7 @@ func Build(in Input) (OperatorPolicy, error) {
 	if err := p.CheckShare(in.Share); err != nil {
 		return OperatorPolicy{}, err
 	}
-	p.ResourcePolicy, err = tpmResourcePolicy(digest, in.ReferenceValues)
+	p.ResourcePolicy, err = resourcePolicy(digest, in.AcceptTEE, in.ReferenceValues)
 	return p, err
 }
 
@@ -127,69 +228,102 @@ func initDataDigest(b []byte) ([sha256.Size]byte, error) {
 		return [sha256.Size]byte{}, fmt.Errorf("parse Init-Data: %w", err)
 	}
 	if doc.Algorithm != "sha256" {
-		return [sha256.Size]byte{}, fmt.Errorf("Init-Data algorithm is %q; the tpm claim profile needs sha256", doc.Algorithm)
+		return [sha256.Size]byte{}, fmt.Errorf("Init-Data algorithm is %q; policy build needs sha256", doc.Algorithm)
 	}
 	return sha256.Sum256(b), nil
 }
 
-func checkTEE(tees []string) error {
+func checkTEE(tees []string, allowUntested bool) error {
 	if len(tees) == 0 {
 		return errors.New("accept at least one TEE type")
 	}
 	for _, t := range tees {
-		if t != TEETPM {
+		p, ok := profiles[t]
+		if !ok {
 			return fmt.Errorf("no claim profile for TEE type %q", t)
+		}
+		if p.untested && !allowUntested {
+			return fmt.Errorf("the %s claim profile is untested, so a production Operator Policy may not accept it; "+
+				"allow untested profiles only for a non-production policy", t)
 		}
 	}
 	return nil
 }
 
-func checkReferenceValues(rv map[string][]string) error {
+func checkReferenceValues(rv map[string][]any, tees []string) error {
 	for name := range rv {
 		if !refName.MatchString(name) {
 			return fmt.Errorf("reference value name %q: use letters, digits, '_', '.' and '-'", name)
 		}
 	}
-	for _, name := range []string{RefTrustedAKs, RefTPMPCR11} {
-		if len(rv[name]) == 0 {
-			return fmt.Errorf("the tpm claim profile needs reference value %q", name)
+	for _, t := range tees {
+		for _, r := range profiles[t].refs {
+			if len(rv[r.name]) == 0 {
+				return fmt.Errorf("the %s claim profile needs reference value %q", t, r.name)
+			}
 		}
 	}
 	return nil
 }
 
-// tpmResourcePolicy is the tpm claim profile. The TPM attester extends PCR8
-// with the Init-Data digest, and the verifier reports PCR8 as the init_data
-// claim, so it must equal sha256(0^32 || digest). The AK and PCR11 are
-// checked twice: by the default AS policy (affirming) and here. TPM evidence
-// has no debug state to check.
-func tpmResourcePolicy(digest [sha256.Size]byte, rv map[string][]string) (string, error) {
-	pcr8 := sha256.Sum256(append(make([]byte, sha256.Size), digest[:]...))
-	vals, err := json.Marshal([]any{hex.EncodeToString(pcr8[:]), rv[RefTrustedAKs], rv[RefTPMPCR11]})
+// resourcePolicy releases the Share to evidence that matches the claim
+// profile of an accepted TEE type: the default AS policy marked it
+// affirming, its init_data claim holds the Init-Data digest as that TEE
+// reports it, debug is off, and each claim the profile's reference values
+// cover is among them. The default AS policy checks those claims too; this
+// policy checks them again. A missing claim leaves its condition
+// undefined, so the rule does not hold.
+func resourcePolicy(digest [sha256.Size]byte, tees []string, rv map[string][]any) (string, error) {
+	used := map[string][]any{}
+	var rules strings.Builder
+	for _, t := range tees {
+		p := profiles[t]
+		fmt.Fprintf(&rules, `
+# Claim profile %s.
+allow if {
+	cpu := input.submods.cpu0
+	cpu["ear.status"] == "affirming"
+	evidence := cpu["ear.veraison.annotated-evidence"]
+	evidence.init_data == %q
+`, t, p.initData(digest))
+		if p.debugOff != "" {
+			fmt.Fprintf(&rules, "\t%s\n", p.debugOff)
+		}
+		for _, r := range p.refs {
+			fmt.Fprintf(&rules, "\t%s in reference_values[%q]\n", r.claim, r.name)
+			used[r.name] = rv[r.name]
+		}
+		rules.WriteString("}\n")
+	}
+	// One value per line: KBS's Rego engine refuses long lines.
+	vals, err := json.MarshalIndent(used, "", "\t")
 	if err != nil {
 		return "", fmt.Errorf("encode reference values: %w", err)
 	}
 	// JSON values are Rego literals.
-	return fmt.Sprintf(`# Operator Verifier resource policy, from trustee-bootstrap policy build.
-# Claim profile: tpm.
+	rego := fmt.Sprintf(`# Operator Verifier resource policy, from trustee-bootstrap policy build.
+# Claim profiles: %s (docs/claim-profiles.md).
 package policy
 
 import rego.v1
 
 default allow := false
 
-expected := %s
+reference_values := %s
+`, strings.Join(tees, ", "), vals) + rules.String()
+	for _, line := range strings.Split(rego, "\n") {
+		// The lexer counts a tab as 4 columns.
+		if w := len(line) + 3*strings.Count(line, "\t"); w > maxRegoColumns {
+			return "", fmt.Errorf("resource policy line %.40q... is %d columns wide; KBS's Rego engine refuses lines over %d",
+				line, w, maxRegoColumns)
+		}
+	}
+	return rego, nil
+}
 
-allow if {
-	cpu := input.submods.cpu0
-	cpu["ear.status"] == "affirming"
-	evidence := cpu["ear.veraison.annotated-evidence"]
-	evidence.init_data == expected[0]
-	evidence.tpm.ak_public in expected[1]
-	evidence.tpm.pcr11 in expected[2]
-}
-`, vals), nil
-}
+// maxRegoColumns is the widest line regorus 0.11.0, KBS v0.22.0's Rego
+// engine, parses: its lexer refuses a column past 1024, counting from 1.
+const maxRegoColumns = 1023
 
 // Write stores p in dir, which it creates 0700.
 func Write(dir string, p OperatorPolicy) error {

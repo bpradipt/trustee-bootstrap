@@ -5,7 +5,7 @@
 | Job | Runs | Locally |
 |---|---|---|
 | `go` | `go vet`, `go test`, and the Go gate's checks on the changes since the base commit | `test/e2e/ci.sh go`, then `test/e2e/ci.sh lint <base>` |
-| `e2e` | `kind-kata-swtpm.sh up`, `share-release.sh`, `trustee-cvm.sh`, then `down` | `test/e2e/ci.sh e2e` |
+| `e2e` | the claim-profile fixtures through the pinned KBS image (AT-28), then `kind-kata-swtpm.sh up`, `share-release.sh`, `trustee-cvm.sh` and `down` | `test/e2e/ci.sh e2e` |
 
 ## The Go gate in CI
 
