@@ -104,6 +104,9 @@ lint) lint "${2:?usage: $0 lint BASE}" ;;
 e2e)
 	# trustee-cvm.sh builds the helper image with podman.
 	export E2E_ENGINE=podman
+	# The Operator Verifier runs on rootless podman, which keeps its crun
+	# state here. Show the owner, so a root-owned leftover is easy to spot.
+	ls -ld "${XDG_RUNTIME_DIR:-/nonexistent}" "${XDG_RUNTIME_DIR:-/nonexistent}/crun" || true
 	# AT-28: only the matching evidence fixtures get a release.
 	go test -count=1 ./test/e2e/profiles -args -engine podman
 	trap '"$e2e/kind-kata-swtpm.sh" down' EXIT
