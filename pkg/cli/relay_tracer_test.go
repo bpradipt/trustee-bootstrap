@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/memnet"
+	"github.com/confidential-devhub/trustee-bootstrap/internal/trusteetest"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/cli"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
@@ -53,7 +54,7 @@ func startTrusteeCVM(t *testing.T, f unlockFixture, cvm *memnet.Network) string 
 			t.Error(err)
 		}
 	})
-	out := filepath.Join(t.TempDir(), "trustee")
+	out := f.out
 	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}})
 	if err != nil {
 		t.Fatal(err)
@@ -206,8 +207,8 @@ func TestTwoOperatorsUnlockThroughRelay(t *testing.T) {
 		t.Errorf("boot_id changed from %s to %s", first.BootID, last.BootID)
 	}
 
-	got, err := os.ReadFile(filepath.Join(out, "policy", "resource.rego"))
-	if err != nil || string(got) != "package policy\n" {
+	got, err := os.ReadFile(filepath.Join(out, verifier.ResourcePolicyPath))
+	if err != nil || string(got) != trusteetest.ResourcePolicy {
 		t.Fatalf("published resource.rego = %q, %v", got, err)
 	}
 	assertNoShareBytes(t, ws.output, f.payloads)

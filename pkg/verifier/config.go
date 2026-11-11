@@ -1,9 +1,15 @@
 package verifier
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
 // AdminAuthenticated is the only admin authorization_mode the Operator
@@ -147,4 +153,108 @@ func CheckSecure(c Config) error {
 		errs = append(errs, fmt.Errorf("[admin] authorization_mode is %q, not %s", c.Admin.AuthorizationMode, AdminAuthenticated))
 	}
 	return errors.Join(errs...)
+}
+
+// TrusteeRoot is where the example Trustee CVM publishes the unsealed tree
+// (the Bootstrap Helper's --out) and where Trustee reads it.
+const TrusteeRoot = "/trustee/config"
+
+// KBSDefaultResourcePolicy is the resource policy KBS installs when its
+// storage holds none: Trustee v0.22.0 kbs/sample_policies/default.rego
+// (commit 512fed65642015b849f38fb13bfdec7806639987), byte for byte. It
+// releases every resource to any attested TEE that isn't the sample one.
+//
+//go:embed kbs-default-resource-policy.rego
+var KBSDefaultResourcePolicy string
+
+// CheckSealedConfig runs the sealed-config checks (spec §3) on the Trustee
+// config tree in dir, as Trustee will see it at root. `seal` runs them
+// before encrypting, and the Bootstrap Helper again before publishing,
+// because a bundle sealed with stock age skipped them.
+func CheckSealedConfig(dir, root string) error {
+	tree, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("open Trustee config tree: %w", err)
+	}
+	defer tree.Close()
+	b, err := tree.ReadFile(ConfigFile)
+	if err != nil {
+		return fmt.Errorf("read KBS config: %w", err)
+	}
+	var c Config
+	if err := toml.Unmarshal(b, &c); err != nil {
+		return fmt.Errorf("parse KBS config: %w", err)
+	}
+	var insecureHTTP error
+	if c.HTTPServer.InsecureHTTP {
+		insecureHTTP = errors.New("[http_server] insecure_http is true")
+	}
+	return errors.Join(CheckSecure(c), insecureHTTP, checkSigner(tree, root, c), checkResourcePolicy(tree, root, c))
+}
+
+// checkSigner requires the AS token signer's key and certificate in the
+// tree, and KBS to trust that certificate. Otherwise KBS verifies no token.
+func checkSigner(tree *os.Root, root string, c Config) error {
+	s := c.AttestationService.TokenBroker.Signer
+	_, keyErr := readInTree(tree, root, s.KeyPath)
+	_, certErr := readInTree(tree, root, s.CertPath)
+	var untrusted error
+	if !slices.Contains(c.AttestationToken.TrustedCertsPaths, s.CertPath) {
+		untrusted = fmt.Errorf("[attestation_token] trusted_certs_paths does not list the AS signer certificate %q", s.CertPath)
+	}
+	return errors.Join(wrapErr("AS signer key", keyErr), wrapErr("AS signer certificate", certErr), untrusted)
+}
+
+// checkResourcePolicy requires the resource policy at the storage backend's
+// exact policy key, non-empty and not KBS's built-in default. KBS installs
+// that default when the key is missing.
+func checkResourcePolicy(tree *os.Root, root string, c Config) error {
+	if c.StorageBackend.StorageType != "LocalFs" {
+		return fmt.Errorf("[storage_backend] storage_type is %q, not LocalFs: KBS would not read the sealed resource policy", c.StorageBackend.StorageType)
+	}
+	path := filepath.Join(c.StorageBackend.Backends.LocalFS.DirPath, "kbs", "resource-policy.rego")
+	policy, err := readInTree(tree, root, path)
+	if err != nil {
+		return wrapErr("resource policy", err)
+	}
+	code := policyCode(string(policy))
+	if code == "" {
+		return fmt.Errorf("resource policy %s is empty", path)
+	}
+	if code == policyCode(KBSDefaultResourcePolicy) {
+		return fmt.Errorf("resource policy %s is KBS's built-in default", path)
+	}
+	return nil
+}
+
+// policyCode is a Rego policy without comment lines or whitespace, so a copy
+// of the default with other comments or layout still compares equal.
+// ponytail: a rewritten but equivalent default still passes; compare parsed
+// Rego if that matters.
+func policyCode(policy string) string {
+	var code strings.Builder
+	for line := range strings.Lines(policy) {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			code.WriteString(strings.Join(strings.Fields(line), ""))
+		}
+	}
+	return code.String()
+}
+
+// readInTree reads the file that Trustee, seeing the tree at root, finds at
+// path. A path outside root is not in the sealed tree.
+func readInTree(tree *os.Root, root, path string) ([]byte, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%q is outside the sealed tree at %s", path, root)
+	}
+	return tree.ReadFile(rel)
+}
+
+// wrapErr names what err is about; nil stays nil.
+func wrapErr(what string, err error) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return nil
 }

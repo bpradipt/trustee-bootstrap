@@ -14,9 +14,11 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/trusteetest"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/cli"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 // run executes the command tree with args and returns its stdout.
@@ -89,6 +91,7 @@ type unlockFixture struct {
 	bundle      []byte
 	payloads    []ceremony.SharePayload // alice, bob, carol
 	ceremonyDir string                  // holds <holder>.share
+	out         string                  // where Trustee sees the unsealed tree (`seal --root`)
 }
 
 // keyCeremonyAndSeal plays the Ceremony Authority (`ceremony split` for
@@ -106,18 +109,10 @@ func keyCeremonyAndSeal(t *testing.T) unlockFixture {
 	}
 	assertNoIdentityOnDisk(t, ceremonyDir)
 
-	config := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(config, "policy"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(config, "kbs-config.toml"), []byte("insecure_http = false\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(config, "policy", "resource.rego"), []byte("package policy\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	trustee := filepath.Join(t.TempDir(), "trustee")
 	bundlePath := filepath.Join(t.TempDir(), "bundle.age")
-	digest := strings.TrimSpace(mustRun(t, "seal", "--manifest", manifestPath, "--output", bundlePath, config))
+	digest := strings.TrimSpace(mustRun(t, "seal", "--manifest", manifestPath, "--output", bundlePath,
+		"--root", trustee, trusteetest.Tree(t, trustee)))
 	bundle, err := os.ReadFile(bundlePath)
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +121,7 @@ func keyCeremonyAndSeal(t *testing.T) unlockFixture {
 		t.Errorf("seal printed %q, want the bundle's SHA-256", digest)
 	}
 
-	f := unlockFixture{manifest: manifest, bundle: bundle, ceremonyDir: ceremonyDir}
+	f := unlockFixture{manifest: manifest, bundle: bundle, ceremonyDir: ceremonyDir, out: trustee}
 	for _, holder := range []string{"alice", "bob", "carol"} {
 		var share ceremony.ShareFile
 		readJSON(t, filepath.Join(ceremonyDir, holder+".share"), &share)
@@ -165,7 +160,7 @@ func assertNoIdentityOnDisk(t *testing.T, dir string) {
 
 func newHelper(t *testing.T, f unlockFixture, payloads ...ceremony.SharePayload) (*helper.Helper, string) {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "trustee")
+	out := f.out
 	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, fakeCDH(t, payloads...))
 	if err != nil {
 		t.Fatal(err)
@@ -184,8 +179,8 @@ func TestUnlockCeremonyTwoOfThreeUnlocks(t *testing.T) {
 	if published, err := h.CollectShare(t.Context()); err != nil || !published {
 		t.Fatalf("second Share: published = %v, err = %v", published, err)
 	}
-	got, err := os.ReadFile(filepath.Join(out, "policy", "resource.rego"))
-	if err != nil || string(got) != "package policy\n" {
+	got, err := os.ReadFile(filepath.Join(out, verifier.ResourcePolicyPath))
+	if err != nil || string(got) != trusteetest.ResourcePolicy {
 		t.Fatalf("published resource.rego = %q, %v", got, err)
 	}
 	if _, err := os.Stat(filepath.Join(out, helper.CompletionMarker)); err != nil {
@@ -233,5 +228,27 @@ func TestSealRejectsMissingManifest(t *testing.T) {
 	_, err := run(t, "seal", "--manifest", filepath.Join(dir, "none.json"), "--output", filepath.Join(dir, "b.age"), dir)
 	if err == nil {
 		t.Fatal("seal accepted a missing manifest")
+	}
+}
+
+// AT-27: `seal` runs the sealed-config checks and writes no bundle for a tree
+// that fails one. With no --root, Trustee sees the tree at /trustee/config.
+func TestSealRefusesEachSealedConfigViolation(t *testing.T) {
+	ceremonyDir := t.TempDir()
+	mustRun(t, "ceremony", "split", "--threshold", "2", "--holders", "alice,bob", "--out-dir", ceremonyDir)
+	manifest := filepath.Join(ceremonyDir, cli.ManifestFile)
+	mustRun(t, "seal", "--manifest", manifest, "--output", filepath.Join(t.TempDir(), "b.age"), trusteetest.Tree(t, verifier.TrusteeRoot))
+	for _, v := range trusteetest.Violations {
+		t.Run(v.Name, func(t *testing.T) {
+			tree := trusteetest.Tree(t, verifier.TrusteeRoot)
+			v.Apply(t, tree)
+			bundle := filepath.Join(t.TempDir(), "b.age")
+			if _, err := run(t, "seal", "--manifest", manifest, "--output", bundle, tree); err == nil || !strings.Contains(err.Error(), v.Want) {
+				t.Fatalf("seal = %v, want the %s check to fail", err, v.Want)
+			}
+			if _, err := os.Stat(bundle); !os.IsNotExist(err) {
+				t.Error("seal wrote a bundle")
+			}
+		})
 	}
 }

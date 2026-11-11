@@ -17,8 +17,11 @@ import (
 	"slices"
 	"sync"
 
+	"filippo.io/age"
+
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 // ShareResourcePath is the CDH get-resource path for the Share payload.
@@ -217,8 +220,9 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// publish unseals into a staging directory beside out, marks it complete,
-// then renames it into place.
+// publish unseals into a staging directory beside out, runs the sealed-config
+// checks, marks it complete, then renames it into place. On failure it wipes
+// the staging directory.
 func (h *Helper) publish() error {
 	id, err := ceremony.Combine(h.shares)
 	for _, s := range h.shares {
@@ -228,14 +232,26 @@ func (h *Helper) publish() error {
 		return err
 	}
 	staging := h.out + ".staging"
-	if err := seal.Unseal(h.bundle, id, staging); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(staging, CompletionMarker), nil, 0o600); err != nil {
-		return fmt.Errorf("write completion marker: %w", err)
+	if err := stage(h.bundle, id, staging, h.out); err != nil {
+		return errors.Join(err, os.RemoveAll(staging))
 	}
 	if err := os.Rename(staging, h.out); err != nil {
 		return fmt.Errorf("publish tree: %w", err)
+	}
+	return nil
+}
+
+// stage unseals bundle into staging and checks the tree as Trustee will see
+// it at out. A bundle sealed with stock age never had these checks.
+func stage(bundle []byte, id age.Identity, staging, out string) error {
+	if err := seal.Unseal(bundle, id, staging); err != nil {
+		return err
+	}
+	if err := verifier.CheckSealedConfig(staging, out); err != nil {
+		return fmt.Errorf("sealed-config checks: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, CompletionMarker), nil, 0o600); err != nil {
+		return fmt.Errorf("write completion marker: %w", err)
 	}
 	return nil
 }

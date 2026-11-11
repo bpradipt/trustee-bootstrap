@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/memnet"
+	"github.com/confidential-devhub/trustee-bootstrap/internal/trusteetest"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
@@ -28,10 +29,11 @@ type mounts struct {
 	manifestSHA256   string
 	recipient        string
 	payloads         []ceremony.SharePayload
+	out              string // where the sealed tree expects to be published
 }
 
-// fixture runs a 2-of-2 Key Ceremony, seals a tree whose kbs-config.toml
-// holds "approved" and writes the manifest and the bundle.
+// fixture runs a 2-of-2 Key Ceremony, seals a Trustee config tree whose
+// bundle-name file holds "approved" and writes the manifest and the bundle.
 func fixture(t *testing.T) mounts {
 	t.Helper()
 	m, files, err := ceremony.Split(2, []string{"alice", "bob"})
@@ -42,14 +44,15 @@ func fixture(t *testing.T) mounts {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle := sealTree(t, m.Recipient, "approved")
 	dir := t.TempDir()
 	f := mounts{
 		manifest:       filepath.Join(dir, "ceremony.json"),
 		bundle:         filepath.Join(dir, "bundle.age"),
 		manifestSHA256: sha256Hex(mb),
 		recipient:      m.Recipient,
+		out:            filepath.Join(t.TempDir(), "trustee"),
 	}
+	bundle := sealTree(t, m.Recipient, f.out, "approved")
 	for _, s := range files {
 		f.payloads = append(f.payloads, ceremony.SharePayload{ShareFile: s, BundleSHA256: sha256Hex(bundle)})
 	}
@@ -58,10 +61,10 @@ func fixture(t *testing.T) mounts {
 	return f
 }
 
-func sealTree(t *testing.T, recipient, config string) []byte {
+func sealTree(t *testing.T, recipient, out, name string) []byte {
 	t.Helper()
-	tree := t.TempDir()
-	writeFile(t, filepath.Join(tree, "kbs-config.toml"), []byte(config))
+	tree := trusteetest.Tree(t, out)
+	writeFile(t, filepath.Join(tree, "bundle-name"), []byte(name))
 	var b bytes.Buffer
 	if err := seal.Seal(&b, tree, recipient); err != nil {
 		t.Fatal(err)
@@ -196,13 +199,13 @@ func TestRunUnsealsTheBundleReadInLocked(t *testing.T) {
 		}
 		return l, err
 	}
-	out := filepath.Join(t.TempDir(), "trustee")
+	out := f.out
 	args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", out, "--listen", "helper:8090"}
 	code := make(chan int, 1)
 	go func() { code <- run(args, listen, fakeCDH(t, f.payloads...)) }()
 
 	<-locked
-	writeFile(t, f.bundle, sealTree(t, f.recipient, "host"))
+	writeFile(t, f.bundle, sealTree(t, f.recipient, out, "host"))
 	writeFile(t, f.manifest, []byte("{}"))
 	for range f.payloads {
 		if got := openRelay(t, &n); got != websocket.StatusNormalClosure {
@@ -212,12 +215,12 @@ func TestRunUnsealsTheBundleReadInLocked(t *testing.T) {
 	if c := <-code; c != 0 {
 		t.Fatalf("run exited %d, want 0", c)
 	}
-	got, err := os.ReadFile(filepath.Join(out, "kbs-config.toml"))
+	got, err := os.ReadFile(filepath.Join(out, "bundle-name"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != "approved" {
-		t.Errorf("published kbs-config.toml = %q, want the approved bundle's", got)
+		t.Errorf("published bundle-name = %q, want the approved bundle's", got)
 	}
 }
 

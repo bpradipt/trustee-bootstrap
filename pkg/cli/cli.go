@@ -15,6 +15,7 @@ import (
 
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 // ManifestFile is the Ceremony Manifest's file name.
@@ -114,15 +115,20 @@ func writeJSON(root *os.Root, name string, v any, perm os.FileMode) error {
 }
 
 func newSealCmd() *cobra.Command {
-	var manifestPath, output string
+	var manifestPath, output, root string
 	cmd := &cobra.Command{
 		Use:   "seal --manifest " + ManifestFile + " --output BUNDLE DIR",
 		Short: "Seal a Trustee config tree into a Sealed Bundle and print its SHA-256",
-		Args:  cobra.ExactArgs(1),
+		Long: "Run the sealed-config checks on DIR as Trustee will see it at --root, " +
+			"then tar and age-encrypt it to the Ceremony Manifest's recipient.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m, err := readJSONFile[ceremony.Manifest](manifestPath, "ceremony manifest")
 			if err != nil {
 				return err
+			}
+			if err := verifier.CheckSealedConfig(args[0], root); err != nil {
+				return fmt.Errorf("sealed-config checks: %w", err)
 			}
 			digest, err := sealToFile(output, args[0], m.Recipient)
 			if err != nil {
@@ -134,6 +140,7 @@ func newSealCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&manifestPath, "manifest", "", "Ceremony Manifest")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Sealed Bundle to write")
+	cmd.Flags().StringVar(&root, "root", verifier.TrusteeRoot, "where Trustee will see the unsealed tree (the Bootstrap Helper's --out)")
 	requireFlags(cmd, "manifest", "output")
 	return cmd
 }

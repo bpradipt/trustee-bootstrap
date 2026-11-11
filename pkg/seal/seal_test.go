@@ -131,12 +131,57 @@ func TestUnsealRejectsWrongIdentity(t *testing.T) {
 	}
 }
 
-func TestUnsealRejectsSymlink(t *testing.T) {
+// AT-14: extraction refuses a booby-trapped tar.
+func TestUnsealRejectsHostileEntries(t *testing.T) {
+	for name, hdr := range map[string]*tar.Header{
+		"..":            {Name: "../escape", Typeflag: tar.TypeReg},
+		".. inside":     {Name: "kbs/../escape", Typeflag: tar.TypeReg},
+		"absolute path": {Name: "/etc/escape", Typeflag: tar.TypeReg},
+		"symlink":       {Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"},
+		"hardlink":      {Name: "link", Typeflag: tar.TypeLink, Linkname: "kbs.toml"},
+		"char device":   {Name: "tty", Typeflag: tar.TypeChar, Devmajor: 5},
+		"block device":  {Name: "disk", Typeflag: tar.TypeBlock, Devmajor: 8},
+		"fifo":          {Name: "pipe", Typeflag: tar.TypeFifo},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := newIdentity(t)
+			bundle := stockBundle(t, id.Recipient(), []*tar.Header{
+				{Name: "kbs/", Typeflag: tar.TypeDir, Mode: 0o700},
+				{Name: "kbs.toml", Typeflag: tar.TypeReg, Mode: 0o600},
+				hdr,
+			}, "x")
+			if err := seal.Unseal(bundle, id, filepath.Join(t.TempDir(), "out")); err == nil {
+				t.Fatalf("Unseal accepted %+v", hdr)
+			}
+		})
+	}
+}
+
+func TestUnsealRejectsCorruptBundle(t *testing.T) {
+	id := newIdentity(t)
+	bundle := stockBundle(t, id.Recipient(), []*tar.Header{{Name: "kbs.toml", Typeflag: tar.TypeReg}}, "x")
+	bundle[len(bundle)-1] ^= 1
+	if err := seal.Unseal(bundle, id, filepath.Join(t.TempDir(), "out")); err == nil {
+		t.Fatal("Unseal accepted a corrupt bundle")
+	}
+}
+
+func TestUnsealAcceptsTheSizeCap(t *testing.T) {
+	id := newIdentity(t)
+	bundle := stockBundle(t, id.Recipient(), []*tar.Header{{Name: "big", Typeflag: tar.TypeReg}}, string(make([]byte, seal.MaxSize)))
+	if err := seal.Unseal(bundle, id, filepath.Join(t.TempDir(), "out")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// AT-14: files under the cap one by one, over it together.
+func TestUnsealRejectsMoreThanTheSizeCap(t *testing.T) {
 	id := newIdentity(t)
 	bundle := stockBundle(t, id.Recipient(), []*tar.Header{
-		{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"},
-	}, "")
+		{Name: "a", Typeflag: tar.TypeReg},
+		{Name: "b", Typeflag: tar.TypeReg},
+	}, string(make([]byte, seal.MaxSize/2+1)))
 	if err := seal.Unseal(bundle, id, filepath.Join(t.TempDir(), "out")); err == nil {
-		t.Fatal("Unseal accepted a symlink")
+		t.Fatal("Unseal extracted more than the size cap")
 	}
 }

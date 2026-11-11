@@ -61,7 +61,7 @@ func relayOn(t *testing.T, n *memnet.Network) websocket.StatusCode {
 // The fake CDH here answers in process; pkg/cli's tracer sends it through the
 // guest proxy and the relay.
 func TestRelayClosesWithOutcome(t *testing.T) {
-	manifest, bundle, payloads := ceremonyFixture(t)
+	manifest, bundle, payloads, out := ceremonyFixture(t)
 	tests := []struct {
 		name     string
 		cdh      helper.CDH
@@ -73,7 +73,7 @@ func TestRelayClosesWithOutcome(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h, _ := newHelper(t, manifest, bundle, tt.cdh)
+			h := newHelper(t, manifest, bundle, out, tt.cdh)
 			if got := openRelay(t, h); got != tt.code {
 				t.Errorf("relay closed with %v, want %v", got, tt.code)
 			}
@@ -85,8 +85,8 @@ func TestRelayClosesWithOutcome(t *testing.T) {
 }
 
 func TestServeStopsOncePublished(t *testing.T) {
-	manifest, bundle, payloads := ceremonyFixture(t)
-	h, _ := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[1]))
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[0], payloads[1]))
 	served, n := serve(t, h, 0)
 
 	for range 2 {
@@ -111,8 +111,8 @@ func TestServeStopsOncePublished(t *testing.T) {
 // AT-10, within one boot: with no --deadline, a Share released earlier stays
 // valid, and a later Share for the same bundle completes the unlock.
 func TestServeWithoutDeadlineKeepsAcceptedShares(t *testing.T) {
-	manifest, bundle, payloads := ceremonyFixture(t)
-	h, _ := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[1]))
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[0], payloads[1]))
 	served, n := serve(t, h, 0)
 
 	if got := relayOn(t, n); got != websocket.StatusNormalClosure {
@@ -129,12 +129,12 @@ func TestServeWithoutDeadlineKeepsAcceptedShares(t *testing.T) {
 // A bundle sealed to another Key Ceremony's recipient can't be opened, even
 // when the Shares name it.
 func TestServeFailsWhenUnsealFails(t *testing.T) {
-	manifest, _, payloads := ceremonyFixture(t)
-	_, otherBundle, otherPayloads := ceremonyFixture(t)
+	manifest, _, payloads, out := ceremonyFixture(t)
+	_, otherBundle, otherPayloads, _ := ceremonyFixture(t)
 	for i := range payloads {
 		payloads[i].BundleSHA256 = otherPayloads[i].BundleSHA256
 	}
-	h, out := newHelper(t, manifest, otherBundle, fakeCDH(t, payloads[0], payloads[1]))
+	h := newHelper(t, manifest, otherBundle, out, fakeCDH(t, payloads[0], payloads[1]))
 	served, _ := serve(t, h, 0)
 
 	if _, err := h.CollectShare(t.Context()); err != nil {
@@ -157,8 +157,8 @@ func TestServeFailsWhenUnsealFails(t *testing.T) {
 // --deadline is cleanup: when it expires, the helper discards the Shares it
 // accepted and fails, and counts no Share after that.
 func TestServeDeadlineDiscardsShares(t *testing.T) {
-	manifest, bundle, payloads := ceremonyFixture(t)
-	h, out := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[1]))
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[0], payloads[1]))
 	if _, err := h.CollectShare(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -179,8 +179,8 @@ func TestServeDeadlineDiscardsShares(t *testing.T) {
 }
 
 func TestServeFailsWhenListenerDies(t *testing.T) {
-	manifest, bundle, _ := ceremonyFixture(t)
-	h, _ := newHelper(t, manifest, bundle, fakeCDH(t))
+	manifest, bundle, _, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t))
 	var n memnet.Network
 	l, err := n.Listen("tcp", "helper:8080")
 	if err != nil {
