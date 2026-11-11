@@ -1,0 +1,59 @@
+{
+  "source": "deps/verifier/src/tpm/mod.rs parse_tee_evidence, extend_claim",
+  "claims": {
+    "eat_profile": "tag:github.com,2023:veraison/ear",
+    "submods": {
+      "cpu0": {
+        "ear.status": "affirming",
+        "ear.trustworthiness-vector": {
+          "executables": 3,
+          "hardware": 2
+        },
+        "ear.veraison.annotated-evidence": {
+          "init_data": "2ae28ca047f6e6cf94110dba996b24d9c51cbc63963cd221cb794066b99589bc",
+          "init_data_claims": {
+            "aa.toml": {
+              "token_configs": {
+                "kbs": {
+                  "url": "http://127.0.0.1:8081"
+                }
+              }
+            }
+          },
+          "runtime_data_claims": {
+            "tee-pubkey": {
+              "kty": "EC",
+              "crv": "P-256",
+              "alg": "ECDH-ES+A256KW",
+              "x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+              "y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+            }
+          },
+          "tpm": {
+            "ak_public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAfixture",
+            "pcr08": "2ae28ca047f6e6cf94110dba996b24d9c51cbc63963cd221cb794066b99589bc",
+            "pcr11": "47501e9266522305077db1c3c26853b70dcc4ba984c963316938253d7d5e34b7"
+          }
+        }
+      }
+    }
+  },
+  "deny": {
+    "wrong Init-Data": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/init_data": "300bd4af80ffcf657c6253eac8dc590a1495a856b4c2936338b758fde416c19a",
+      "/submods/cpu0/ear.veraison.annotated-evidence/tpm/pcr08": "300bd4af80ffcf657c6253eac8dc590a1495a856b4c2936338b758fde416c19a"
+    },
+    "not affirming": {
+      "/submods/cpu0/ear.status": "warning"
+    },
+    "untrusted AK": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/tpm/ak_public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAother"
+    }
+  },
+  "required": [
+    "/submods/cpu0/ear.status",
+    "/submods/cpu0/ear.veraison.annotated-evidence/init_data",
+    "/submods/cpu0/ear.veraison.annotated-evidence/tpm/ak_public",
+    "/submods/cpu0/ear.veraison.annotated-evidence/tpm/pcr11"
+  ]
+}

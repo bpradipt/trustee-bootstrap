@@ -135,7 +135,7 @@ func runtime(rt http.RoundTripper, engine string) verifier.Runtime {
 
 var opts = verifier.Options{
 	ResourcePolicy:  "package policy\n",
-	ReferenceValues: map[string][]string{"trusted_aks": {"AK"}},
+	ReferenceValues: map[string][]any{"trusted_aks": {"AK"}},
 	SharePayload:    []byte(`{"index":1}`),
 }
 

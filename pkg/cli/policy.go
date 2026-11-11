@@ -25,7 +25,7 @@ func newPolicyBuildCmd() *cobra.Command {
 			if in.InitData, err = os.ReadFile(initData); err != nil {
 				return fmt.Errorf("read Init-Data: %w", err)
 			}
-			if in.ReferenceValues, err = readJSONFile[map[string][]string](refValues, "reference values"); err != nil {
+			if in.ReferenceValues, err = readJSONFile[map[string][]any](refValues, "reference values"); err != nil {
 				return err
 			}
 			if in.Manifest, err = readJSONFile[ceremony.Manifest](manifestPath, "ceremony manifest"); err != nil {
@@ -47,7 +47,9 @@ func newPolicyBuildCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&initData, "init-data", "", "the reviewed Init-Data TOML")
 	cmd.Flags().StringVar(&refValues, "reference-values", "", `JSON reference values by name, e.g. {"trusted_aks": ["…"]}`)
-	cmd.Flags().StringSliceVar(&in.AcceptTEE, "accept-tee", nil, "TEE types to accept (tpm)")
+	cmd.Flags().StringSliceVar(&in.AcceptTEE, "accept-tee", nil, "TEE types to accept: tpm, tdx, snp, az-snp-vtpm, az-tdx-vtpm")
+	cmd.Flags().BoolVar(&in.AllowUntested, "allow-untested-profiles", false,
+		"accept TEE types whose claim profile has passed no real-TEE run (today: all, tpm included); the policy is then not a production Operator Policy")
 	cmd.Flags().StringVar(&in.BundleSHA256, "bundle-sha256", "", "SHA-256 of the Approved Bundle, in lowercase hex as seal prints it")
 	cmd.Flags().StringVar(&manifestPath, "manifest", "", "Ceremony Manifest")
 	cmd.Flags().StringVar(&shareFile, "share-file", "", "your Share file")

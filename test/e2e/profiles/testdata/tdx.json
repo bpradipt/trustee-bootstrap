@@ -1,0 +1,83 @@
+{
+  "source": "deps/verifier/src/tdx/claims.rs generate_parsed_claim",
+  "claims": {
+    "eat_profile": "tag:github.com,2023:veraison/ear",
+    "submods": {
+      "cpu0": {
+        "ear.status": "affirming",
+        "ear.trustworthiness-vector": {
+          "executables": 4,
+          "hardware": 2,
+          "configuration": 2
+        },
+        "ear.veraison.annotated-evidence": {
+          "init_data": "5e299da8ffeb6c18a63909ec004c9e56f7deae3af883ecba1e8ec9db3d2ec1f500000000000000000000000000000000",
+          "init_data_claims": {
+            "aa.toml": {
+              "token_configs": {
+                "kbs": {
+                  "url": "http://127.0.0.1:8081"
+                }
+              }
+            }
+          },
+          "runtime_data_claims": {
+            "tee-pubkey": {
+              "kty": "EC",
+              "crv": "P-256",
+              "alg": "ECDH-ES+A256KW",
+              "x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+              "y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+            }
+          },
+          "tdx": {
+            "quote": {
+              "header": {
+                "tee_type": "81000000",
+                "vendor_id": "939a7233f79c4ca9940a0db3957f0607"
+              },
+              "body": {
+                "mr_td": "fb2b54400987d6738fb073b581504db49402cb495cd2ea36ae3ce8f4589afa4de54281ca8047fa7a61e6f55d4dab8d14",
+                "xfam": "e702060000000000",
+                "td_attributes": "0000001000000000",
+                "mr_config_id": "5e299da8ffeb6c18a63909ec004c9e56f7deae3af883ecba1e8ec9db3d2ec1f500000000000000000000000000000000",
+                "rtmr_1": "4774670b37d16e2baebfe2d12a6df664add8b1f633075c08d077b9fe9dac52429653b53472d4e90e860beebbd36867b3",
+                "rtmr_2": "8c78f290a388c8ccccd6418f9dfdf92b23ad0a2c2b848b7bdf20fcb26d147bb2d6ded59a409b43c18728eaa72df40560"
+              }
+            },
+            "td_attributes": {
+              "debug": false,
+              "septve_disable": true,
+              "protection_keys": false,
+              "key_locker": false,
+              "perfmon": false
+            },
+            "tcb_status": "UpToDate"
+          }
+        }
+      }
+    }
+  },
+  "deny": {
+    "wrong Init-Data": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/init_data": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "/submods/cpu0/ear.veraison.annotated-evidence/tdx/quote/body/mr_config_id": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "debug on": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/tdx/td_attributes/debug": true,
+      "/submods/cpu0/ear.veraison.annotated-evidence/tdx/quote/body/td_attributes": "0100001000000000"
+    },
+    "not affirming": {
+      "/submods/cpu0/ear.status": "warning"
+    }
+  },
+  "required": [
+    "/submods/cpu0/ear.status",
+    "/submods/cpu0/ear.veraison.annotated-evidence/init_data",
+    "/submods/cpu0/ear.veraison.annotated-evidence/tdx/td_attributes/debug",
+    "/submods/cpu0/ear.veraison.annotated-evidence/tdx/quote/body/rtmr_1",
+    "/submods/cpu0/ear.veraison.annotated-evidence/tdx/quote/body/rtmr_2",
+    "/submods/cpu0/ear.veraison.annotated-evidence/tdx/quote/body/mr_td",
+    "/submods/cpu0/ear.veraison.annotated-evidence/tdx/quote/body/xfam"
+  ]
+}

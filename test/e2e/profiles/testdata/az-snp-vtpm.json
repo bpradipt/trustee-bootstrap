@@ -1,0 +1,85 @@
+{
+  "source": "deps/verifier/src/az_snp_vtpm/mod.rs parse_tee_evidence_az, extend_claim",
+  "claims": {
+    "eat_profile": "tag:github.com,2023:veraison/ear",
+    "submods": {
+      "cpu0": {
+        "ear.status": "affirming",
+        "ear.trustworthiness-vector": {
+          "executables": 3,
+          "hardware": 2,
+          "configuration": 2
+        },
+        "ear.veraison.annotated-evidence": {
+          "init_data": "2ae28ca047f6e6cf94110dba996b24d9c51cbc63963cd221cb794066b99589bc",
+          "init_data_claims": {
+            "aa.toml": {
+              "token_configs": {
+                "kbs": {
+                  "url": "http://127.0.0.1:8081"
+                }
+              }
+            }
+          },
+          "runtime_data_claims": {
+            "tee-pubkey": {
+              "kty": "EC",
+              "crv": "P-256",
+              "alg": "ECDH-ES+A256KW",
+              "x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+              "y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+            }
+          },
+          "az-snp-vtpm": {
+            "policy_abi_major": "0",
+            "policy_abi_minor": "31",
+            "policy_smt_allowed": "true",
+            "policy_migrate_ma": "false",
+            "policy_debug_allowed": "false",
+            "policy_single_socket": "false",
+            "reported_tcb_bootloader": "10",
+            "reported_tcb_tee": "0",
+            "reported_tcb_snp": "23",
+            "reported_tcb_microcode": "213",
+            "platform_tsme_enabled": "false",
+            "platform_smt_enabled": "true",
+            "measurement": "IrV+bPNsoplCWmN1aURF8RW9H6+Hfw+eyIVAEDaDj7viSk6RK9+jyPlhRfe2OsWb",
+            "tpm": {
+              "pcr08": "2ae28ca047f6e6cf94110dba996b24d9c51cbc63963cd221cb794066b99589bc",
+              "pcr11": "cc380bc36676a3b5066b147798229fd5266a68b894740a812ba04da8dc30ee58"
+            }
+          }
+        }
+      }
+    }
+  },
+  "deny": {
+    "wrong Init-Data": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/init_data": "300bd4af80ffcf657c6253eac8dc590a1495a856b4c2936338b758fde416c19a",
+      "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/tpm/pcr08": "300bd4af80ffcf657c6253eac8dc590a1495a856b4c2936338b758fde416c19a"
+    },
+    "debug on": {
+      "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/policy_debug_allowed": "true"
+    },
+    "not affirming": {
+      "/submods/cpu0/ear.status": "warning"
+    }
+  },
+  "required": [
+    "/submods/cpu0/ear.status",
+    "/submods/cpu0/ear.veraison.annotated-evidence/init_data",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/policy_debug_allowed",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/measurement",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/tpm/pcr11",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/reported_tcb_bootloader",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/reported_tcb_microcode",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/reported_tcb_snp",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/reported_tcb_tee",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/platform_smt_enabled",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/platform_tsme_enabled",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/policy_abi_major",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/policy_abi_minor",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/policy_single_socket",
+    "/submods/cpu0/ear.veraison.annotated-evidence/az-snp-vtpm/policy_smt_allowed"
+  ]
+}

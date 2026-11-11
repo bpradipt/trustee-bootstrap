@@ -51,8 +51,8 @@ const asPolicyDir = "storage/attestation_service_policy"
 type Options struct {
 	// KBSBinary runs a natively installed kbs instead of Image.
 	KBSBinary       string
-	ResourcePolicy  string              // Rego
-	ReferenceValues map[string][]string // loaded into the built-in RVPS
+	ResourcePolicy  string           // Rego
+	ReferenceValues map[string][]any // loaded into the built-in RVPS
 	SharePayload    []byte
 }
 
@@ -324,7 +324,7 @@ func tokenSigner() (key, cert []byte, err error) {
 
 // referenceValue is the built-in RVPS's stored form of a sample reference
 // value (Trustee v0.22.0 rvps/src/reference_value.rs).
-func referenceValue(name string, values []string) ([]byte, error) {
+func referenceValue(name string, values []any) ([]byte, error) {
 	b, err := json.Marshal(map[string]any{
 		"version":    "0.1.0",
 		"name":       name,

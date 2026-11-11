@@ -232,7 +232,7 @@ render_pod() {
 
 # policy_build <holder>
 policy_build() {
-	tb policy build --init-data "$work/init.toml" --reference-values "$work/rv.json" --accept-tee tpm \
+	tb policy build --init-data "$work/init.toml" --reference-values "$work/rv.json" --accept-tee tpm --allow-untested-profiles \
 		--bundle-sha256 "$bundle_sha256" --manifest "$work/ceremony/ceremony.json" \
 		--share-file "$work/ceremony/$1.share" --out-dir "$work/policy-$1" >/dev/null
 }
