@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,6 +77,9 @@ func sealedFixture(t *testing.T, tree, out string) (manifest, bundle []byte, pay
 	return manifest, b.Bytes(), payloads, out
 }
 
+// discard drops the audit records of tests that do not read them.
+var discard = slog.New(slog.DiscardHandler)
+
 // digest is the hex SHA-256 that --manifest-sha256 and bundle_sha256 carry.
 func digest(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -84,7 +88,7 @@ func digest(b []byte) string {
 
 func newHelper(t *testing.T, manifest, bundle []byte, out string, cdh helper.CDH) *helper.Helper {
 	t.Helper()
-	h, err := helper.New(manifest, digest(manifest), bundle, out, cdh)
+	h, err := helper.New(manifest, digest(manifest), bundle, out, cdh, discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +278,7 @@ func TestNewRejectsInvalidManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := helper.New(manifest, digest(manifest), nil, t.TempDir(), fakeCDH(t)); err == nil {
+	if _, err := helper.New(manifest, digest(manifest), nil, t.TempDir(), fakeCDH(t), discard); err == nil {
 		t.Fatal("New accepted threshold 3 with 2 shares")
 	}
 }
@@ -294,7 +298,7 @@ func TestNewRejectsManifestDigestMismatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := helper.New(manifest, tt.pinned, bundle, t.TempDir(), fakeCDH(t))
+			_, err := helper.New(manifest, tt.pinned, bundle, t.TempDir(), fakeCDH(t), discard)
 			if err == nil || !strings.Contains(err.Error(), "does not match --manifest-sha256") {
 				t.Fatalf("New = %v, want a manifest digest mismatch", err)
 			}
@@ -311,7 +315,7 @@ func TestCDHErrorIsReturned(t *testing.T) {
 }
 
 func TestNewRejectsBadManifest(t *testing.T) {
-	if _, err := helper.New([]byte("{"), digest([]byte("{")), nil, t.TempDir(), fakeCDH(t)); err == nil {
+	if _, err := helper.New([]byte("{"), digest([]byte("{")), nil, t.TempDir(), fakeCDH(t), discard); err == nil {
 		t.Fatal("New accepted a malformed Ceremony Manifest")
 	}
 }

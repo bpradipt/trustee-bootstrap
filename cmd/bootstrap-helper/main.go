@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/relay"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
@@ -76,7 +77,7 @@ func serve(args []string, listen func(network, address string) (net.Listener, er
 	if err != nil {
 		return fmt.Errorf("read sealed bundle: %w", err)
 	}
-	h, err := helper.New(manifest, *manifestSHA256, bundle, *out, helper.CDH{URL: cdhURL, Client: cdh})
+	h, err := helper.New(manifest, *manifestSHA256, bundle, *out, helper.CDH{URL: cdhURL, Client: cdh}, audit.New(os.Stderr))
 	if err != nil {
 		return err
 	}

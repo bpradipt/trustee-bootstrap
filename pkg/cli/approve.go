@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/spf13/cobra"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/policy"
@@ -69,7 +71,10 @@ func newApproveCmd(e env) *cobra.Command {
 			// Verifier stops and its run directory goes (AT-18).
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			if err := e.approve(ctx, endpoint, share, opts, limits); err != nil {
+			log := audit.New(cmd.ErrOrStderr()).With("index", share.Index, "key_id", share.KeyID, "endpoint", endpoint)
+			err = e.approve(ctx, endpoint, share, opts, limits, log)
+			log.Info(audit.ApproveResult, "accepted", err == nil, audit.Error(err))
+			if err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "accepted")
@@ -132,9 +137,9 @@ func newStatusCmd(e env) *cobra.Command {
 	return cmd
 }
 
-// approve runs one Security Operator's flow (spec §4) within limits. It never
-// prints the Share.
-func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareFile, opts verifier.Options, limits relay.Limits) error {
+// approve runs one Security Operator's flow (spec §4) within limits and
+// writes its audit records to log. It never prints the Share.
+func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareFile, opts verifier.Options, limits relay.Limits, log *slog.Logger) error {
 	st, err := e.status(ctx, endpoint)
 	if err != nil {
 		return err
@@ -149,7 +154,11 @@ func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareF
 	if err != nil {
 		return fmt.Errorf("start Operator Verifier: %w", err)
 	}
-	defer stop()
+	log.Info(audit.VerifierStarted, "address", addr)
+	defer func() {
+		stop()
+		log.Info(audit.VerifierStopped)
+	}()
 	u, err := url.JoinPath(endpoint, helper.RelayPath)
 	if err != nil {
 		return fmt.Errorf("relay URL: %w", err)
@@ -159,13 +168,18 @@ func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareF
 		return fmt.Errorf("open relay: %w", err)
 	}
 	defer ws.CloseNow()
+	log.Info(audit.RelayOpened)
 	err = relay.Operator(ctx, ws, func(ctx context.Context) (net.Conn, error) {
 		return e.dial(ctx, "tcp", addr)
 	}, limits)
-	if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-		return fmt.Errorf("relay ended: %w", err)
+	// Only the helper's normal closure says it accepted the Share.
+	code := websocket.CloseStatus(err)
+	if code == websocket.StatusNormalClosure {
+		log.Info(audit.RelayClosed, "code", int(code))
+		return nil
 	}
-	return nil
+	log.Info(audit.RelayClosed, "code", int(code), audit.Error(err))
+	return fmt.Errorf("relay ended: %w", err)
 }
 
 // status fetches the Bootstrap Helper's status.

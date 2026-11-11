@@ -6,7 +6,8 @@
 #          stock CDH gets each Share payload through the guest proxy, the
 #          relay and the Operator Verifier, and the Bootstrap Helper publishes
 #   AT-04  changed Init-Data: the Operator Verifier releases nothing
-#   AT-06  a capture of all relay traffic, inner and outer, holds no Share
+#   AT-06  a capture of all relay traffic, inner and outer, holds no Share,
+#          and neither do the audit records of approve and the helper
 #   AT-18  after every approve (success, failure, SIGINT, SIGTERM, and with
 #          a rootful engine), no Operator Verifier container, run directory
 #          or listener remains
@@ -150,12 +151,16 @@ status_is() {
 	[[ $got == "$1" ]] || die "status is '$got', want '$1'"
 }
 
-# approve_via <endpoint> <holder> [flags...]
+# approve_via <endpoint> <holder> [flags...]: prints "accepted", or the
+# error output on failure. Its audit records go to $work/audit.log.
 approve_via() {
-	local to=$1 holder=$2
+	local to=$1 holder=$2 rc=0
 	shift 2
 	tb approve --endpoint "$to" --policy "$work/policy-$holder" \
-		--share-file "$work/ceremony/$holder.share" "$@" 2>&1
+		--share-file "$work/ceremony/$holder.share" "$@" 2>"$work/approve.err" || rc=$?
+	cat "$work/approve.err" >>"$work/audit.log"
+	((rc == 0)) || cat "$work/approve.err"
+	return "$rc"
 }
 
 # approve <holder> [flags...]: through the real Bootstrap Helper.
@@ -264,20 +269,26 @@ relay_attacks() {
 	info "AT-05: with the attacker's TEE key, or with replayed evidence, the Operator Verifier released nothing"
 }
 
-# assert_no_share <pcap>: no Share, raw or base64, appears in the capture,
-# and the capture did see the relay, RCAR and the JWE.
+# assert_no_share <pcap> <audit log>: no Share, raw, hex or base64, appears
+# in the capture or the audit records. The capture did see the relay, RCAR
+# and the JWE, and the audit log holds both sides' records.
 assert_no_share() {
-	python3 - "$1" "$work"/ceremony/*.share <<-'EOF'
+	python3 - "$1" "$2" "$work"/ceremony/*.share <<-'EOF'
 		import base64, json, sys
-		cap = open(sys.argv[1], "rb").read()
-		for path in sys.argv[2:]:
+		cap, audit = (open(p, "rb").read() for p in sys.argv[1:3])
+		for path in sys.argv[3:]:
 		    share = base64.b64decode(json.load(open(path))["share"])
-		    for needle in (share, base64.b64encode(share), base64.urlsafe_b64encode(share).rstrip(b"=")):
-		        if needle in cap:
-		            sys.exit(f"Share bytes from {path} in the relay capture")
+		    for needle in (share, share.hex().encode(), base64.b64encode(share).rstrip(b"="),
+		                   base64.urlsafe_b64encode(share).rstrip(b"=")):
+		        for name, data in (("relay capture", cap), ("audit log", audit)):
+		            if needle in data:
+		                sys.exit(f"Share bytes from {path} in the {name}")
 		for marker in (b"/bootstrap/v1/relay", b"/kbs/v0/attest", b'"ciphertext"'):
 		    if marker not in cap:
 		        sys.exit(f"the capture lacks {marker!r}, so it missed the exchange")
+		for event in (b'"msg":"approve_result"', b'"msg":"share_accepted"', b'"state":"PUBLISHED"'):
+		    if event not in audit:
+		        sys.exit(f"the audit log lacks {event!r}")
 	EOF
 }
 
@@ -316,13 +327,14 @@ main() {
 	kc wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$HELPER" --timeout=60s >/dev/null ||
 		die "the Bootstrap Helper did not publish: $(kc logs "$HELPER" 2>&1 | tail -5)"
 	info "AT-03: both Shares released and accepted; the Bootstrap Helper published and exited 0"
+	kc logs "$HELPER" >>"$work/audit.log"
 
 	sleep 1
 	sudo kill -INT "$capture_pid"
 	wait "$capture_pid" || true
 	capture_pid=
-	assert_no_share "$work/relay.pcap" || die "AT-06"
-	info "AT-06: the relay capture ($(stat -c %s "$work/relay.pcap") bytes) holds no Share"
+	assert_no_share "$work/relay.pcap" "$work/audit.log" || die "AT-06"
+	info "AT-06: the relay capture ($(stat -c %s "$work/relay.pcap") bytes) and the audit log ($(wc -l <"$work/audit.log") records) hold no Share"
 
 	info "relay holder attacks"
 	helper_pod "$good"
