@@ -85,6 +85,14 @@ func Commitment(share []byte) string {
 	return "sha256:" + SHA256Hex(share)
 }
 
+// Wipe zeroes each secret in place: Shares and Share payloads once used.
+// It is best effort; Go may have copied the bytes elsewhere.
+func Wipe(secrets ...[]byte) {
+	for _, s := range secrets {
+		clear(s)
+	}
+}
+
 // SHA256Hex is b's SHA-256 in lowercase hex: a Sealed Bundle's or Ceremony
 // Manifest's digest as seal prints it and --manifest-sha256 pins it.
 func SHA256Hex(b []byte) string {

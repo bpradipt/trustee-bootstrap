@@ -45,7 +45,7 @@ func TestDefaultConfigIsSecure(t *testing.T) {
 		want []string
 	}{
 		"insecure_header_jwk": {jwk, []string{"insecure_header_jwk"}},
-		"InsecureAllowAll":    {open, []string{`"InsecureAllowAll"`}},
+		"InsecureAllowAll":    {open, []string{"authorization_mode"}},
 		"both":                {verifier.Config{}, []string{"insecure_header_jwk", "authorization_mode"}},
 	} {
 		if name == "both" {
@@ -152,7 +152,11 @@ func tmpfsDir(t *testing.T) string {
 			continue
 		}
 		if dir, err := os.MkdirTemp(parent, "verifier-test-"); err == nil {
-			t.Cleanup(func() { os.RemoveAll(dir) })
+			t.Cleanup(func() {
+				if err := os.RemoveAll(dir); err != nil {
+					t.Error(err)
+				}
+			})
 			return dir
 		}
 	}
@@ -188,9 +192,47 @@ func TestStartKBSBinary(t *testing.T) {
 	}
 	assertRunDir(t, dir)
 
-	stop()
+	if err := stop(); err != nil {
+		t.Errorf("stop = %v", err)
+	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("run directory survived stop: %v", err)
+	}
+}
+
+// The run directory holds the Share payload, so stop reports a wipe that
+// failed rather than leave it behind silently.
+func TestStopReportsAFailedWipe(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root deletes from a read-only directory")
+	}
+	t.Setenv("XDG_RUNTIME_DIR", tmpfsDir(t))
+	kbs := fakeExecutable(t, "kbs", "exec sleep 60")
+	o := opts
+	o.KBSBinary = kbs
+	_, stop, err := runtime(answering{kbs}, "").Start(t.Context(), "127.0.0.1:0", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A read-only subdirectory with a file in it: RemoveAll can't empty it.
+	stuck := filepath.Join(filepath.Dir(recordedArgs(t, kbs)[1]), "stuck")
+	if err := os.Mkdir(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stuck, "f"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(); err == nil || !strings.Contains(err.Error(), "Share payload") {
+		t.Errorf("stop = %v, want the failed wipe reported", err)
+	}
+	if err := os.Chmod(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(); err != nil {
+		t.Errorf("stop after the fix = %v", err)
 	}
 }
 
@@ -206,7 +248,10 @@ func assertRunDir(t *testing.T, dir string) {
 		if info.Mode().Perm() != 0o600 {
 			t.Errorf("%s mode = %v, want 0600", name, info.Mode().Perm())
 		}
-		b, _ := os.ReadFile(path)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
 		return b
 	}
 	block, _ := pem.Decode(read(verifier.AdminPublicKeyFile))
@@ -274,7 +319,11 @@ func TestStartContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
+	t.Cleanup(func() {
+		if err := stop(); err != nil {
+			t.Error(err)
+		}
+	})
 	args := recordedArgs(t, engine)
 	dir := strings.TrimSuffix(args[5], ":/etc/kbs:Z")
 	want := []string{"run", "--rm", "-p", addr + ":8080", "-v", dir + ":/etc/kbs:Z", verifier.Image,
@@ -301,7 +350,7 @@ func TestStartReportsKBSFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "bad config") {
 		t.Errorf("Start = %v, want KBS's output", err)
 	}
-	if entries, _ := os.ReadDir(runDirs); len(entries) != 0 {
+	if entries, err := os.ReadDir(runDirs); err != nil || len(entries) != 0 {
 		t.Errorf("run directory left behind: %v", entries)
 	}
 }
@@ -343,10 +392,16 @@ func TestStartRefusesARunDirectoryOffTmpfs(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("run directory in %s: Start = %v, want %q", parent, err, want)
 		}
-		if left, _ := filepath.Glob(filepath.Join(wd, "trustee-bootstrap-verifier-*")); len(left) != 0 {
+		left, err := filepath.Glob(filepath.Join(wd, "trustee-bootstrap-verifier-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(left) != 0 {
 			t.Errorf("Start created %v", left)
 			for _, d := range left {
-				os.RemoveAll(d)
+				if err := os.RemoveAll(d); err != nil {
+					t.Error(err)
+				}
 			}
 		}
 		if _, err := os.Stat(kbs + ".args"); err == nil {

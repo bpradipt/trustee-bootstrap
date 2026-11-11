@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -89,10 +90,10 @@ func Unseal(bundle []byte, id age.Identity, dst string) error {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("read bundle: %w", err)
+			return fmt.Errorf("bundle: read tar: %w", cause(err))
 		}
 		if hdr.Size > MaxSize-size {
-			return fmt.Errorf("%s: the bundle unseals to over %d bytes", hdr.Name, MaxSize)
+			return errors.New("bundle: unseals to over the 1 MiB size cap")
 		}
 		size += hdr.Size
 		if err := extract(root, hdr, tr); err != nil {
@@ -101,33 +102,44 @@ func Unseal(bundle []byte, id age.Identity, dst string) error {
 	}
 }
 
+// extract writes one entry into root. Entry names are plaintext metadata
+// (spec §0.6), so its errors give a fixed reason and never the name.
 func extract(root *os.Root, hdr *tar.Header, r io.Reader) error {
 	if !filepath.IsLocal(hdr.Name) || slices.Contains(strings.Split(hdr.Name, "/"), "..") {
-		return fmt.Errorf("%s: path is absolute or holds ..", hdr.Name)
+		return errors.New("bundle: entry path is absolute or holds ..")
 	}
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		if err := root.MkdirAll(hdr.Name, 0o700); err != nil {
-			return fmt.Errorf("create %s: %w", hdr.Name, err)
+			return fmt.Errorf("bundle: create a directory entry: %w", cause(err))
 		}
 		return nil
 	case tar.TypeReg:
 		return writeFile(root, hdr.Name, r)
 	default:
-		return fmt.Errorf("%s: unsupported tar entry type %q", hdr.Name, hdr.Typeflag)
+		return errors.New("bundle: entry type not allowed")
 	}
 }
 
 func writeFile(root *os.Root, name string, r io.Reader) error {
 	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", name, err)
+		return fmt.Errorf("bundle: create a file entry: %w", cause(err))
 	}
 	if _, err := io.Copy(f, r); err != nil {
-		return errors.Join(fmt.Errorf("write %s: %w", name, err), f.Close())
+		return errors.Join(fmt.Errorf("bundle: write a file entry: %w", cause(err)), cause(f.Close()))
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", name, err)
+		return fmt.Errorf("bundle: close a file entry: %w", cause(err))
 	}
 	return nil
+}
+
+// cause is err without the path that an *fs.PathError carries.
+func cause(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	return err
 }

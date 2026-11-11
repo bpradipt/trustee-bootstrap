@@ -75,8 +75,9 @@ func DefaultEngine() string {
 
 // Start runs the Operator Verifier on address (a 127.0.0.1 address; port 0
 // picks one) and returns the address it serves on once KBS answers. stop
-// ends KBS and deletes its run directory.
-func (r Runtime) Start(ctx context.Context, address string, opts Options) (addr string, stop func(), err error) {
+// ends KBS and deletes its run directory, which holds the Share payload; it
+// reports a delete that failed.
+func (r Runtime) Start(ctx context.Context, address string, opts Options) (addr string, stop func() error, err error) {
 	parent := runtimeDir()
 	if err := checkTmpfs(parent); err != nil {
 		return "", nil, err
@@ -91,10 +92,17 @@ func (r Runtime) Start(ctx context.Context, address string, opts Options) (addr 
 	}
 	end, err := r.launch(ctx, dir, addr, opts)
 	if err != nil {
-		os.RemoveAll(dir)
-		return "", nil, err
+		return "", nil, errors.Join(err, wipe(dir))
 	}
-	return addr, func() { end(); os.RemoveAll(dir) }, nil
+	return addr, func() error { end(); return wipe(dir) }, nil
+}
+
+// wipe deletes the run directory and its copy of the Share payload.
+func wipe(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("wipe the Operator Verifier's run directory, which holds the Share payload: %w", err)
+	}
+	return nil
 }
 
 // reservePort picks the port, on 127.0.0.1 only (AT-02).
@@ -167,7 +175,10 @@ func (r Runtime) launch(ctx context.Context, dir, addr string, opts Options) (fu
 		return nil, fmt.Errorf("start KBS: %w", err)
 	}
 	exited := make(chan struct{})
-	go func() { cmd.Wait(); close(exited) }()
+	// Wait's error is KBS's exit status. stop's SIGTERM makes it non-zero
+	// on every run, and a KBS that dies before it answers shows up in
+	// waitReady with its output, so there is nothing more to report.
+	go func() { _ = cmd.Wait(); close(exited) }()
 	end := func() { cancel(); <-exited }
 	if err := r.waitReady(ctx, addr, exited); err != nil {
 		end()

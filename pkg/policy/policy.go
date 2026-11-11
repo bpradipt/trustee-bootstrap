@@ -177,15 +177,6 @@ func Build(in Input) (OperatorPolicy, error) {
 	if err != nil {
 		return OperatorPolicy{}, err
 	}
-	if err := checkTEE(in.AcceptTEE, in.AllowUntested); err != nil {
-		return OperatorPolicy{}, err
-	}
-	if err := checkReferenceValues(in.ReferenceValues, in.AcceptTEE); err != nil {
-		return OperatorPolicy{}, err
-	}
-	if b, err := hex.DecodeString(in.BundleSHA256); err != nil || len(b) != sha256.Size || in.BundleSHA256 != strings.ToLower(in.BundleSHA256) {
-		return OperatorPolicy{}, fmt.Errorf("bundle digest %q is not a SHA-256 in 64 lowercase hex characters", in.BundleSHA256)
-	}
 	commitment, err := in.Manifest.CommitmentFor(in.Share.Index)
 	if err != nil {
 		return OperatorPolicy{}, err
@@ -201,11 +192,37 @@ func Build(in Input) (OperatorPolicy, error) {
 		Commitment:       commitment,
 		UntestedProfiles: in.AllowUntested,
 	}
+	if err := p.validate(); err != nil {
+		return OperatorPolicy{}, err
+	}
 	if err := p.CheckShare(in.Share); err != nil {
 		return OperatorPolicy{}, err
 	}
 	p.ResourcePolicy, err = resourcePolicy(digest, in.AcceptTEE, in.ReferenceValues)
 	return p, err
+}
+
+// validate runs the checks that Build and Load share: known TEE types,
+// untested ones only in a policy marked untested, the reference values each
+// profile needs under names KBS storage accepts, and both digests as
+// 64 lowercase hex characters.
+func (p OperatorPolicy) validate() error {
+	if err := checkTEE(p.AcceptTEE, p.UntestedProfiles); err != nil {
+		return err
+	}
+	if err := checkReferenceValues(p.ReferenceValues, p.AcceptTEE); err != nil {
+		return err
+	}
+	return errors.Join(checkDigest("bundle digest", p.BundleSHA256), checkDigest("Init-Data digest", p.InitDataSHA256))
+}
+
+// checkDigest refuses s unless it is a SHA-256 in lowercase hex, as seal
+// prints it.
+func checkDigest(what, s string) error {
+	if b, err := hex.DecodeString(s); err != nil || len(b) != sha256.Size || s != strings.ToLower(s) {
+		return fmt.Errorf("%s %q is not a SHA-256 in 64 lowercase hex characters", what, s)
+	}
+	return nil
 }
 
 // CheckShare refuses a Share file that this policy was not built for, or
@@ -363,5 +380,8 @@ func Load(dir string) (OperatorPolicy, error) {
 		return p, fmt.Errorf("read resource policy: %w", err)
 	}
 	p.ResourcePolicy = string(rego)
+	if err := p.validate(); err != nil {
+		return p, fmt.Errorf("Operator Policy: %w", err)
+	}
 	return p, nil
 }

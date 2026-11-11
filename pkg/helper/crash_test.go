@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
@@ -133,6 +134,32 @@ func TestFailedSyncAfterRenameStillPublishes(t *testing.T) {
 	published, err := helper.Recover(filepath.Join(moved, filepath.Base(out)))
 	if err != nil || !published {
 		t.Fatalf("Recover = %v, %v; want the published tree found", published, err)
+	}
+}
+
+// Status answers while the helper unseals and publishes, and reports
+// UNSEALING: the lock is not held across that I/O.
+func TestStatusAnswersWhileUnsealing(t *testing.T) {
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[0], payloads[1]))
+	var during helper.State
+	helper.SetRename(t, func(oldpath, newpath string) error {
+		got := make(chan helper.State, 1)
+		go func() { got <- h.Status().State }()
+		select {
+		case during = <-got:
+		case <-time.After(5 * time.Second):
+			t.Error("Status blocked while the helper published")
+		}
+		return os.Rename(oldpath, newpath)
+	})
+	for range 2 {
+		if _, err := h.CollectShare(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if during != helper.StateUnsealing {
+		t.Errorf("state while publishing = %q, want %s", during, helper.StateUnsealing)
 	}
 }
 
