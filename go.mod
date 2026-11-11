@@ -2,6 +2,8 @@ module github.com/confidential-devhub/trustee-bootstrap
 
 go 1.25.3
 
+toolchain go1.26.4
+
 require (
 	filippo.io/age v1.3.2
 	github.com/BurntSushi/toml v1.6.0
