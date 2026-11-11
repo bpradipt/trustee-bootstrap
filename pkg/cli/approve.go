@@ -35,9 +35,15 @@ type env struct {
 	startVerifier func(ctx context.Context, address string, opts verifier.Options) (string, func(), error)
 }
 
+// defaultEnv touches nothing outside the process: cococtl builds the tree
+// at startup for every command, so the container engine is looked up only
+// when approve starts the Operator Verifier.
 func defaultEnv() env {
-	rt := verifier.Runtime{Engine: verifier.DefaultEngine(), Listen: net.Listen, Client: http.DefaultClient}
-	return env{client: http.DefaultClient, dial: (&net.Dialer{}).DialContext, startVerifier: rt.Start}
+	start := func(ctx context.Context, address string, opts verifier.Options) (string, func(), error) {
+		rt := verifier.Runtime{Engine: verifier.DefaultEngine(), Listen: net.Listen, Client: http.DefaultClient}
+		return rt.Start(ctx, address, opts)
+	}
+	return env{client: http.DefaultClient, dial: (&net.Dialer{}).DialContext, startVerifier: start}
 }
 
 func newApproveCmd(e env) *cobra.Command {
