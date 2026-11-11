@@ -125,7 +125,7 @@ type Helper struct {
 // its audit records to log.
 func New(manifest []byte, manifestSHA256 string, bundle []byte, out Output, cdh CDH, log *slog.Logger) (*Helper, error) {
 	if got := ceremony.SHA256Hex(manifest); got != manifestSHA256 {
-		return nil, fmt.Errorf("ceremony manifest sha256 %s does not match --manifest-sha256 %q", got, manifestSHA256)
+		return nil, fmt.Errorf("Ceremony Manifest sha256 %s does not match --manifest-sha256 %q", got, manifestSHA256)
 	}
 	h := &Helper{
 		bundle:       bundle,
@@ -139,10 +139,10 @@ func New(manifest []byte, manifestSHA256 string, bundle []byte, out Output, cdh 
 		rejected:     []int{},
 	}
 	if err := json.Unmarshal(manifest, &h.manifest); err != nil {
-		return nil, fmt.Errorf("parse ceremony manifest: %w", err)
+		return nil, fmt.Errorf("parse Ceremony Manifest: %w", err)
 	}
 	if err := h.manifest.Validate(); err != nil {
-		return nil, fmt.Errorf("ceremony manifest: %w", err)
+		return nil, fmt.Errorf("Ceremony Manifest: %w", err)
 	}
 	h.audit = log.With("boot_id", h.bootID, "key_id", h.manifest.KeyID)
 	h.audit.Info(audit.StateChanged, "state", h.state, "threshold", h.manifest.Threshold, "bundle_sha256", h.bundleSHA256)

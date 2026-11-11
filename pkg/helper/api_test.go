@@ -238,7 +238,10 @@ func TestSecondConcurrentRelayGetsConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := relay.Limits{Idle: 50 * time.Millisecond, Total: time.Minute}
+	limits, err := relay.NewLimits(50*time.Millisecond, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := &http.Server{Handler: h.Handler(func() (net.Listener, error) { return n.Listen("tcp", "127.0.0.1:8081") }, limits)}
 	go srv.Serve(l)
 	defer srv.Close()

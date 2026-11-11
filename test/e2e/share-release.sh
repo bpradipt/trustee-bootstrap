@@ -38,6 +38,8 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=kind-kata-swtpm.sh
 source "$script_dir/kind-kata-swtpm.sh"
+# shellcheck source=operators.sh
+source "$script_dir/operators.sh"
 info() { echo "[share-release] $*" >&2; }
 die() { echo "[share-release] FAIL: $*" >&2; exit 1; }
 
@@ -51,8 +53,6 @@ HELPER=bootstrap-helper
 ATTACKER=127.0.0.1:8098
 # The engine the CLI picks (verifier.DefaultEngine).
 CLI_ENGINE=$(command -v podman >/dev/null && echo podman || echo docker)
-
-tb() { "$work/bin/trustee-bootstrap" "$@"; }
 
 cleanup() {
 	set +e
@@ -97,14 +97,6 @@ setup() {
 	fi
 }
 
-# policy_build <holder>: the Security Operator reviews init.toml and builds
-# their Operator Policy from it.
-policy_build() {
-	tb policy build --init-data "$work/init.toml" --reference-values "$work/rv.json" --accept-tee tpm --allow-untested-profiles \
-		--bundle-sha256 "$bundle_sha256" --manifest "$work/ceremony/ceremony.json" \
-		--share-file "$work/ceremony/$1.share" --out-dir "$work/policy-$1" >/dev/null
-}
-
 # helper_pod <initdata>: (re)start the Bootstrap Helper in a Kata pod with
 # that Init-Data, and wait until its status answers.
 helper_pod() {
@@ -143,28 +135,6 @@ helper_pod() {
 	done
 	die "the Bootstrap Helper did not start: $(kc describe pod "$HELPER" | tail -5; kc logs "$HELPER" 2>&1 | tail -5)"
 }
-
-# status_is <state accepted>, e.g. status_is "PUBLISHED [1, 3]"
-status_is() {
-	local got
-	got=$(tb status --endpoint "$endpoint" | python3 -c 'import json,sys; s=json.load(sys.stdin); print(s["state"], s["accepted"])')
-	[[ $got == "$1" ]] || die "status is '$got', want '$1'"
-}
-
-# approve_via <endpoint> <holder> [flags...]: prints "accepted", or the
-# error output on failure. Its audit records go to $work/audit.log.
-approve_via() {
-	local to=$1 holder=$2 rc=0
-	shift 2
-	tb approve --endpoint "$to" --policy "$work/policy-$holder" \
-		--share-file "$work/ceremony/$holder.share" "$@" 2>"$work/approve.err" || rc=$?
-	cat "$work/approve.err" >>"$work/audit.log"
-	((rc == 0)) || cat "$work/approve.err"
-	return "$rc"
-}
-
-# approve <holder> [flags...]: through the real Bootstrap Helper.
-approve() { approve_via "$endpoint" "$@"; }
 
 # TCP listeners on this machine, less the test's own attacker, which comes
 # and goes with each attack.

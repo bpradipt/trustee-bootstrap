@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
@@ -13,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -49,13 +48,13 @@ func fixture(t *testing.T) mounts {
 	f := mounts{
 		manifest:       filepath.Join(dir, "ceremony.json"),
 		bundle:         filepath.Join(dir, "bundle.age"),
-		manifestSHA256: sha256Hex(mb),
+		manifestSHA256: ceremony.SHA256Hex(mb),
 		recipient:      m.Recipient,
 		out:            filepath.Join(t.TempDir(), "trustee"),
 	}
 	bundle := sealTree(t, m.Recipient, f.out, "approved")
 	for _, s := range files {
-		f.payloads = append(f.payloads, ceremony.SharePayload{ShareFile: s, BundleSHA256: sha256Hex(bundle)})
+		f.payloads = append(f.payloads, ceremony.SharePayload{ShareFile: s, BundleSHA256: ceremony.SHA256Hex(bundle)})
 	}
 	writeFile(t, f.manifest, mb)
 	writeFile(t, f.bundle, bundle)
@@ -78,11 +77,6 @@ func writeFile(t *testing.T, path string, data []byte) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func sha256Hex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
 }
 
 // serveInProcess is an http.RoundTripper that hands each request to a handler.
@@ -149,7 +143,7 @@ func TestRunFailsWithExitOne(t *testing.T) {
 		{"missing bundle", []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle + ".gone", "--out", out}},
 		// AT-11
 		{"--manifest-sha256 dropped", []string{"--manifest", f.manifest, "--bundle", f.bundle, "--out", out}},
-		{"swapped manifest", []string{"--manifest", f.manifest, "--manifest-sha256", sha256Hex([]byte("{}")), "--bundle", f.bundle, "--out", out}},
+		{"swapped manifest", []string{"--manifest", f.manifest, "--manifest-sha256", ceremony.SHA256Hex([]byte("{}")), "--bundle", f.bundle, "--out", out}},
 		{"listen refused", []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", out}},
 		{"--out missing", []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle}},
 		{"--out is a file", []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", f.bundle}},
@@ -241,40 +235,43 @@ func TestRunFailsAtDeadline(t *testing.T) {
 // AT-23: the host swaps both mounted files after LOCKED. The helper still
 // unseals the bundle it read in LOCKED, and the approved Shares unlock it.
 func TestRunUnsealsTheBundleReadInLocked(t *testing.T) {
-	f := fixture(t)
-	var n memnet.Network
-	locked := make(chan struct{})
-	listen := func(network, address string) (net.Listener, error) {
-		l, err := n.Listen(network, address)
-		if address == "helper:8090" {
-			close(locked) // the files are read before the Helper API listens
+	// synctest runs the retry sleep in openRelay on a fake clock.
+	synctest.Test(t, func(t *testing.T) {
+		f := fixture(t)
+		var n memnet.Network
+		locked := make(chan struct{})
+		listen := func(network, address string) (net.Listener, error) {
+			l, err := n.Listen(network, address)
+			if address == "helper:8090" {
+				close(locked) // the files are read before the Helper API listens
+			}
+			return l, err
 		}
-		return l, err
-	}
-	out := f.out
-	args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", out, "--listen", "helper:8090"}
-	args = append(args, owner()...)
-	code := make(chan int, 1)
-	go func() { code <- run(args, listen, fakeCDH(t, f.payloads...)) }()
+		out := f.out
+		args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", out, "--listen", "helper:8090"}
+		args = append(args, owner()...)
+		code := make(chan int, 1)
+		go func() { code <- run(args, listen, fakeCDH(t, f.payloads...)) }()
 
-	<-locked
-	writeFile(t, f.bundle, sealTree(t, f.recipient, out, "host"))
-	writeFile(t, f.manifest, []byte("{}"))
-	for range f.payloads {
-		if got := openRelay(t, &n); got != websocket.StatusNormalClosure {
-			t.Fatalf("relay closed with %v, want the Share accepted", got)
+		<-locked
+		writeFile(t, f.bundle, sealTree(t, f.recipient, out, "host"))
+		writeFile(t, f.manifest, []byte("{}"))
+		for range f.payloads {
+			if got := openRelay(t, &n); got != websocket.StatusNormalClosure {
+				t.Fatalf("relay closed with %v, want the Share accepted", got)
+			}
 		}
-	}
-	if c := <-code; c != 0 {
-		t.Fatalf("run exited %d, want 0", c)
-	}
-	got, err := os.ReadFile(filepath.Join(out, "bundle-name"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "approved" {
-		t.Errorf("published bundle-name = %q, want the approved bundle's", got)
-	}
+		if c := <-code; c != 0 {
+			t.Fatalf("run exited %d, want 0", c)
+		}
+		got, err := os.ReadFile(filepath.Join(out, "bundle-name"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != "approved" {
+			t.Errorf("published bundle-name = %q, want the approved bundle's", got)
+		}
+	})
 }
 
 // AT-26: restarted after the rename, the helper finds the marked tree and
@@ -320,16 +317,16 @@ func TestRunWipesLeftoverStaging(t *testing.T) {
 
 func TestReadCappedAcceptsTheCap(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bundle.age")
-	writeFile(t, path, make([]byte, maxFileSize))
+	writeFile(t, path, make([]byte, seal.MaxSize))
 	b, err := readCapped(path)
-	if err != nil || len(b) != maxFileSize {
-		t.Fatalf("readCapped = %d bytes, %v; want %d bytes", len(b), err, maxFileSize)
+	if err != nil || len(b) != seal.MaxSize {
+		t.Fatalf("readCapped = %d bytes, %v; want %d bytes", len(b), err, seal.MaxSize)
 	}
 }
 
 func TestReadCappedRefusesMore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bundle.age")
-	writeFile(t, path, make([]byte, maxFileSize+1))
+	writeFile(t, path, make([]byte, seal.MaxSize+1))
 	if _, err := readCapped(path); err == nil {
 		t.Fatal("readCapped read a file over the size cap")
 	}

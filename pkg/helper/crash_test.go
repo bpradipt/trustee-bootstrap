@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
@@ -115,7 +116,7 @@ func TestFailedSyncAfterRenameStillPublishes(t *testing.T) {
 		return os.Rename(parent, moved) // the fsync can't open the parent
 	})
 	var records bytes.Buffer
-	h, err := helper.New(manifest, digest(manifest), bundle, owned(out), fakeCDH(t, payloads[0], payloads[1]), audit.New(&records))
+	h, err := helper.New(manifest, ceremony.SHA256Hex(manifest), bundle, owned(out), fakeCDH(t, payloads[0], payloads[1]), audit.New(&records))
 	if err != nil {
 		t.Fatal(err)
 	}

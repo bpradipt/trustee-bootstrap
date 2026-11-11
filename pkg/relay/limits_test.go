@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"flag"
 	"io"
 	"net"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -199,11 +202,20 @@ func TestGuestEndsRelayOnNinthConnection(t *testing.T) {
 	<-done
 }
 
+// newLimits is relay.NewLimits for limits a test knows are valid.
+func newLimits(t *testing.T, idle, total time.Duration) relay.Limits {
+	t.Helper()
+	l, err := relay.NewLimits(idle, total)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
 // AT-20: each side ends the relay after the idle or total time, with a policy
-// violation that names the limit.
+// violation that names the limit. Time is synctest's, so the test waits for
+// nothing.
 func TestRelayEndsAtTimeLimits(t *testing.T) {
-	idle := relay.Limits{Idle: 20 * time.Millisecond, Total: 2 * time.Minute}
-	total := relay.Limits{Idle: 30 * time.Second, Total: 20 * time.Millisecond}
 	sides := map[string]func(t *testing.T, l relay.Limits) (peer *websocket.Conn, done <-chan error){
 		"guest": func(t *testing.T, l relay.Limits) (*websocket.Conn, <-chan error) {
 			guestWS, operatorWS := wsPair(t)
@@ -220,17 +232,23 @@ func TestRelayEndsAtTimeLimits(t *testing.T) {
 	}
 	for side, start := range sides {
 		for _, tt := range []struct {
-			limits relay.Limits
-			reason string
-		}{{idle, "relay idle"}, {total, "relay open too long"}} {
+			idle, total time.Duration
+			reason      string
+		}{{time.Second, 2 * time.Minute, "relay idle"}, {30 * time.Second, time.Second, "relay open too long"}} {
 			t.Run(side+" "+tt.reason, func(t *testing.T) {
-				peer, done := start(t, tt.limits)
-				_, _, err := peer.Read(t.Context())
-				var ce websocket.CloseError
-				if !errors.As(err, &ce) || ce.Code != websocket.StatusPolicyViolation || ce.Reason != tt.reason {
-					t.Errorf("relay ended with %v, want policy violation %q", err, tt.reason)
-				}
-				<-done
+				synctest.Test(t, func(t *testing.T) {
+					peer, done := start(t, newLimits(t, tt.idle, tt.total))
+					began := time.Now()
+					_, _, err := peer.Read(t.Context())
+					var ce websocket.CloseError
+					if !errors.As(err, &ce) || ce.Code != websocket.StatusPolicyViolation || ce.Reason != tt.reason {
+						t.Errorf("relay ended with %v, want policy violation %q", err, tt.reason)
+					}
+					if took := time.Since(began); took != time.Second {
+						t.Errorf("relay ended after %v, want 1s", took)
+					}
+					<-done
+				})
 			})
 		}
 	}
@@ -238,79 +256,104 @@ func TestRelayEndsAtTimeLimits(t *testing.T) {
 
 // Frames in either direction keep a relay open past its idle time.
 func TestTrafficKeepsRelayOpen(t *testing.T) {
-	limits := relay.Limits{Idle: 100 * time.Millisecond, Total: 2 * time.Minute}
+	const idle = 100 * time.Millisecond
 	t.Run("frames received", func(t *testing.T) {
-		guestWS, _, _ := operator(t, limits)
-		_, ended := drain(t.Context(), guestWS)
-		for range 15 {
-			send(t, guestWS, frame(3, 7)) // CLOSE for no connection: ignored
-			time.Sleep(20 * time.Millisecond)
-		}
-		if len(ended) > 0 {
-			t.Errorf("relay ended: %v", <-ended)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			guestWS, _, _ := operator(t, newLimits(t, idle, 2*time.Minute))
+			_, ended := drain(t.Context(), guestWS)
+			for range 15 {
+				send(t, guestWS, frame(3, 7)) // CLOSE for no connection: ignored
+				time.Sleep(idle / 2)
+			}
+			synctest.Wait()
+			if len(ended) > 0 {
+				t.Errorf("relay ended: %v", <-ended)
+			}
+		})
 	})
 	t.Run("frames sent", func(t *testing.T) {
-		guestWS, operatorWS := wsPair(t)
-		var cvm memnet.Network
-		go relay.Guest(t.Context(), guestWS, listen(t, &cvm, proxyAddr), limits)
-		_, ended := drain(t.Context(), operatorWS)
-		c, err := cvm.DialContext(t.Context(), "tcp", proxyAddr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for range 15 {
-			if _, err := c.Write([]byte("x")); err != nil {
+		synctest.Test(t, func(t *testing.T) {
+			guestWS, operatorWS := wsPair(t)
+			var cvm memnet.Network
+			go relay.Guest(t.Context(), guestWS, listen(t, &cvm, proxyAddr), newLimits(t, idle, 2*time.Minute))
+			_, ended := drain(t.Context(), operatorWS)
+			c, err := cvm.DialContext(t.Context(), "tcp", proxyAddr)
+			if err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		if len(ended) > 0 {
-			t.Errorf("relay ended: %v", <-ended)
-		}
+			for range 15 {
+				if _, err := c.Write([]byte("x")); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(idle / 2)
+			}
+			synctest.Wait()
+			if len(ended) > 0 {
+				t.Errorf("relay ended: %v", <-ended)
+			}
+		})
 	})
 }
 
 // The limits can be lowered, never raised or disabled.
-func TestLimitsCheck(t *testing.T) {
+func TestNewLimits(t *testing.T) {
 	tests := []struct {
-		name   string
-		limits relay.Limits
-		ok     bool
+		name        string
+		idle, total time.Duration
+		ok          bool
 	}{
-		{"defaults", relay.Limits{Idle: 30 * time.Second, Total: 120 * time.Second}, true},
-		{"lowered", relay.Limits{Idle: time.Nanosecond, Total: time.Nanosecond}, true},
-		{"idle zero", relay.Limits{Idle: 0, Total: time.Minute}, false},
-		{"idle negative", relay.Limits{Idle: -time.Second, Total: time.Minute}, false},
-		{"idle raised", relay.Limits{Idle: 30*time.Second + 1, Total: time.Minute}, false},
-		{"total zero", relay.Limits{Idle: time.Second, Total: 0}, false},
-		{"total negative", relay.Limits{Idle: time.Second, Total: -time.Minute}, false},
-		{"total raised", relay.Limits{Idle: time.Second, Total: 120*time.Second + 1}, false},
+		{"defaults", 30 * time.Second, 120 * time.Second, true},
+		{"lowered", time.Nanosecond, time.Nanosecond, true},
+		{"idle zero", 0, time.Minute, false},
+		{"idle negative", -time.Second, time.Minute, false},
+		{"idle raised", 30*time.Second + 1, time.Minute, false},
+		{"total zero", time.Second, 0, false},
+		{"total negative", time.Second, -time.Minute, false},
+		{"total raised", time.Second, 120*time.Second + 1, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.limits.Check(); (err == nil) != tt.ok {
-				t.Errorf("Check() = %v, want ok %v", err, tt.ok)
+			if _, err := relay.NewLimits(tt.idle, tt.total); (err == nil) != tt.ok {
+				t.Errorf("NewLimits = %v, want ok %v", err, tt.ok)
 			}
 		})
 	}
-	if relay.DefaultLimits() != (relay.Limits{Idle: 30 * time.Second, Total: 120 * time.Second}) {
+	if want := newLimits(t, 30*time.Second, 120*time.Second); relay.DefaultLimits() != want {
 		t.Errorf("DefaultLimits = %+v, want 30 s idle and 120 s total", relay.DefaultLimits())
 	}
 }
 
-// Neither side runs a relay with disabled limits.
-func TestRelayRefusesDisabledLimits(t *testing.T) {
-	guestWS, operatorWS := wsPair(t)
-	var cvm memnet.Network
-	if err := relay.Guest(t.Context(), guestWS, listen(t, &cvm, proxyAddr), relay.Limits{}); err == nil {
-		t.Error("Guest ran without limits")
+// The flags that the Bootstrap Helper and approve share go through
+// NewLimits.
+func TestLimitFlags(t *testing.T) {
+	for args, ok := range map[string]bool{"": true, "--relay-idle-timeout=5s": true, "--relay-total-timeout=0": false, "--relay-idle-timeout=31s": false} {
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		limits := relay.LimitFlags(fs)
+		if err := fs.Parse(strings.Fields(args)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := limits(); (err == nil) != ok {
+			t.Errorf("%q: limits = %v, want ok %v", args, err, ok)
+		}
 	}
-	if _, err := cvm.DialContext(t.Context(), "tcp", proxyAddr); err == nil {
-		t.Error("guest proxy still listening")
-	}
-	dial := func(context.Context) (net.Conn, error) { return nil, errors.New("dialled") }
-	if err := relay.Operator(t.Context(), operatorWS, dial, relay.Limits{}); err == nil {
-		t.Error("Operator ran without limits")
-	}
+}
+
+// The zero Limits disables nothing: it ends the relay at once.
+// Each side's close handshake waits for a peer that never reads; synctest
+// skips that wait.
+func TestZeroLimitsEndTheRelay(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		guestWS, operatorWS := wsPair(t)
+		var cvm memnet.Network
+		if err := relay.Guest(t.Context(), guestWS, listen(t, &cvm, proxyAddr), relay.Limits{}); err == nil {
+			t.Error("Guest kept a relay with zero limits")
+		}
+		if _, err := cvm.DialContext(t.Context(), "tcp", proxyAddr); err == nil {
+			t.Error("guest proxy still listening")
+		}
+		dial := func(context.Context) (net.Conn, error) { return nil, errors.New("dialled") }
+		if err := relay.Operator(t.Context(), operatorWS, dial, relay.Limits{}); err == nil {
+			t.Error("Operator kept a relay with zero limits")
+		}
+	})
 }

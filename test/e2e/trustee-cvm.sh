@@ -34,6 +34,8 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=kind-kata-swtpm.sh
 source "$script_dir/kind-kata-swtpm.sh"
+# shellcheck source=operators.sh
+source "$script_dir/operators.sh"
 info() { echo "[trustee-cvm] $*" >&2; }
 die() { echo "[trustee-cvm] FAIL: $*" >&2; exit 1; }
 
@@ -53,8 +55,6 @@ HELPER_SVC=trustee-bootstrap-helper
 TRUSTEE_HOST=trustee.default.svc.cluster.local
 SECRET=default/e2e/secret
 SECRET_VALUE=trustee-workload-ok
-
-tb() { "$work/bin/trustee-bootstrap" "$@"; }
 
 # delete_objects [--wait]: everything this test puts in the cluster.
 delete_objects() {
@@ -228,27 +228,6 @@ render_pod() {
 		sys.stdout.buffer.write(gzip.decompress(base64.b64decode(m.group(1))))
 	EOF
 	grep -q '"policy.rego"' "$work/init.toml" || die "genpolicy wrote no agent policy into the Init-Data"
-}
-
-# policy_build <holder>
-policy_build() {
-	tb policy build --init-data "$work/init.toml" --reference-values "$work/rv.json" --accept-tee tpm --allow-untested-profiles \
-		--bundle-sha256 "$bundle_sha256" --manifest "$work/ceremony/ceremony.json" \
-		--share-file "$work/ceremony/$1.share" --out-dir "$work/policy-$1" >/dev/null
-}
-
-# approve <holder>: prints "accepted", or the error output on failure. The
-# audit records stay in $work/approve-<holder>.log.
-approve() {
-	tb approve --endpoint "$endpoint" --policy "$work/policy-$1" --share-file "$work/ceremony/$1.share" \
-		2>"$work/approve-$1.log" || { cat "$work/approve-$1.log"; return 1; }
-}
-
-# status_is <state accepted>, e.g. status_is "COLLECTING [1]"
-status_is() {
-	local got
-	got=$(tb status --endpoint "$endpoint" | python3 -c 'import json,sys; s=json.load(sys.stdin); print(s["state"], s["accepted"])')
-	[[ $got == "$1" ]] || die "status is '$got', want '$1'"
 }
 
 ready() { kc get pod "$POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'; }

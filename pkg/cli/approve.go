@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -52,16 +53,18 @@ func defaultEnv() env {
 
 func newApproveCmd(e env) *cobra.Command {
 	var endpoint, policyDir, shareFile, kbsBinary string
-	limits := relay.DefaultLimits()
+	relayFlags := flag.NewFlagSet("relay", flag.ContinueOnError)
+	relayLimits := relay.LimitFlags(relayFlags)
 	cmd := &cobra.Command{
 		Use:   "approve --endpoint URL --policy DIR --share-file FILE",
 		Short: "Release your Share to the Trustee CVM through the Bootstrap Helper's relay",
 		Long: "Check your Share against your Operator Policy, start the Operator Verifier on 127.0.0.1, " +
 			"open the relay to the Bootstrap Helper and serve its attestation through it. Prints " +
-			"\"accepted\" once the helper accepts the Share; that does not mean Trustee is running.",
+			"\"accepted\" once the Bootstrap Helper accepts the Share; that does not mean Trustee is running.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := limits.Check(); err != nil {
+			limits, err := relayLimits()
+			if err != nil {
 				return err
 			}
 			share, opts, err := loadApproval(policyDir, shareFile, cmd.ErrOrStderr())
@@ -90,8 +93,7 @@ func newApproveCmd(e env) *cobra.Command {
 	cmd.Flags().StringVar(&policyDir, "policy", "", "your Operator Policy directory (policy build --out-dir)")
 	cmd.Flags().StringVar(&shareFile, "share-file", "", "your Share file")
 	cmd.Flags().StringVar(&kbsBinary, "kbs-binary", "", "run this natively installed kbs instead of the pinned KBS image")
-	cmd.Flags().DurationVar(&limits.Idle, "relay-idle-timeout", limits.Idle, "end the relay after this long with no traffic; may be lowered, not raised")
-	cmd.Flags().DurationVar(&limits.Total, "relay-total-timeout", limits.Total, "end the relay after this long; may be lowered, not raised")
+	cmd.Flags().AddGoFlagSet(relayFlags)
 	requireFlags(cmd, "endpoint", "policy", "share-file")
 	return cmd
 }
