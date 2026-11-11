@@ -35,6 +35,14 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: test/e2e/ci.sh lint "$BASE"
+      # The release binaries, an SBOM for each, and SHA256SUMS.
+      - name: release build and SBOM
+        run: test/e2e/ci.sh release "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
 
   e2e:
     runs-on: ubuntu-24.04
