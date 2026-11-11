@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -142,6 +143,7 @@ func TestUnsealRejectsHostileEntries(t *testing.T) {
 		"char device":   {Name: "tty", Typeflag: tar.TypeChar, Devmajor: 5},
 		"block device":  {Name: "disk", Typeflag: tar.TypeBlock, Devmajor: 8},
 		"fifo":          {Name: "pipe", Typeflag: tar.TypeFifo},
+		"repeated file": {Name: "kbs.toml", Typeflag: tar.TypeReg},
 	} {
 		t.Run(name, func(t *testing.T) {
 			id := newIdentity(t)
@@ -150,8 +152,14 @@ func TestUnsealRejectsHostileEntries(t *testing.T) {
 				{Name: "kbs.toml", Typeflag: tar.TypeReg, Mode: 0o600},
 				hdr,
 			}, "x")
-			if err := seal.Unseal(bundle, id, filepath.Join(t.TempDir(), "out")); err == nil {
+			err := seal.Unseal(bundle, id, filepath.Join(t.TempDir(), "out"))
+			if err == nil {
 				t.Fatalf("Unseal accepted %+v", hdr)
+			}
+			// Entry names are plaintext metadata (spec §0.6): the error,
+			// which reaches stderr and the audit records, holds none.
+			if strings.Contains(err.Error(), hdr.Name) {
+				t.Errorf("Unseal error %q names the entry %q", err, hdr.Name)
 			}
 		})
 	}
@@ -181,8 +189,12 @@ func TestUnsealRejectsMoreThanTheSizeCap(t *testing.T) {
 		{Name: "a", Typeflag: tar.TypeReg},
 		{Name: "b", Typeflag: tar.TypeReg},
 	}, string(make([]byte, seal.MaxSize/2+1)))
-	if err := seal.Unseal(bundle, id, filepath.Join(t.TempDir(), "out")); err == nil {
+	err := seal.Unseal(bundle, id, filepath.Join(t.TempDir(), "out"))
+	if err == nil {
 		t.Fatal("Unseal extracted more than the size cap")
+	}
+	if strings.Contains(err.Error(), "b:") {
+		t.Errorf("Unseal error %q names the entry", err)
 	}
 }
 

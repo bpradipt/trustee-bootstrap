@@ -148,8 +148,12 @@ func TestBoobyTrappedTreePublishesNothing(t *testing.T) {
 	if _, err := h.CollectShare(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if published, err := h.CollectShare(t.Context()); published || err == nil || !strings.Contains(err.Error(), "zz-link") {
+	published, err := h.CollectShare(t.Context())
+	if published || err == nil || !strings.Contains(err.Error(), "entry type not allowed") {
 		t.Fatalf("CollectShare = %v, %v; want the symlink refused", published, err)
+	}
+	if strings.Contains(err.Error(), "zz-link") {
+		t.Errorf("CollectShare error %q names the tar entry", err)
 	}
 	for _, dir := range []string{out, out + ".staging"} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
@@ -319,6 +323,29 @@ func TestCDHErrorIsReturned(t *testing.T) {
 	h := newHelper(t, manifest, bundle, out, fakeCDH(t))
 	if _, err := h.CollectShare(t.Context()); err == nil {
 		t.Fatal("CollectShare succeeded when the CDH returned 404")
+	}
+}
+
+// The helper reads at most 64 KiB of the CDH's answer: a Share payload is a
+// few hundred bytes, and the CDH relays what the Operator Verifier sends.
+func TestCDHAnswerIsCapped(t *testing.T) {
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	body, err := json.Marshal(payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded := append(bytes.Repeat([]byte(" "), 65536), body...) // valid JSON, over the cap
+	cdh := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := w.Write(padded); err != nil {
+			t.Error(err)
+		}
+	})
+	h := newHelper(t, manifest, bundle, out, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}})
+	if _, err := h.CollectShare(t.Context()); err == nil {
+		t.Fatal("CollectShare read a CDH answer over the cap")
+	}
+	if got := h.Status().Accepted; len(got) != 0 {
+		t.Errorf("accepted = %v, want none", got)
 	}
 }
 

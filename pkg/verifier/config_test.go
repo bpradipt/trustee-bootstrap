@@ -45,6 +45,13 @@ func TestSealedConfigChecksRefuseEachViolation(t *testing.T) {
 			if n := len(strings.Split(err.Error(), "\n")); n != 1 {
 				t.Errorf("CheckSealedConfig reported %d problems, want 1: %v", n, err)
 			}
+			// Paths and values from the tree are plaintext metadata (spec
+			// §0.6); the error reaches stderr and the audit records.
+			for _, leak := range []string{root, "InsecureAllowAll", "Postgres", "/opt/kbs", "storage/kbs", "as-signer"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("CheckSealedConfig error %q holds %q from the tree", err, leak)
+				}
+			}
 		})
 	}
 }
@@ -54,11 +61,15 @@ func TestSealedConfigChecksNeedATree(t *testing.T) {
 		t.Fatal("CheckSealedConfig passed a missing tree")
 	}
 	dir := trusteetest.Tree(t, verifier.TrusteeRoot)
-	if err := os.WriteFile(filepath.Join(dir, verifier.ConfigFile), []byte("insecure_http = "), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, verifier.ConfigFile), []byte("admin_secret = \"hunter2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifier.CheckSealedConfig(dir, verifier.TrusteeRoot); err == nil || !strings.Contains(err.Error(), "parse KBS config") {
+	err := verifier.CheckSealedConfig(dir, verifier.TrusteeRoot)
+	if err == nil || !strings.Contains(err.Error(), "not valid TOML") {
 		t.Fatalf("CheckSealedConfig = %v, want a parse error", err)
+	}
+	if strings.Contains(err.Error(), "hunter2") || strings.Contains(err.Error(), "admin_secret") {
+		t.Errorf("CheckSealedConfig error %q quotes the KBS config", err)
 	}
 }
 

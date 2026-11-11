@@ -42,7 +42,8 @@ func (h *Helper) Handler(listenProxy func() (net.Listener, error), limits relay.
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(h.Status())
+		// A failed write means the client went away; nobody is left to tell.
+		_ = json.NewEncoder(w).Encode(h.Status())
 	})
 	mux.HandleFunc("GET "+RelayPath, func(w http.ResponseWriter, r *http.Request) {
 		h.serveRelay(w, r, listenProxy, limits)
@@ -93,7 +94,7 @@ func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy 
 	defer cancel()
 	relayed := make(chan struct{})
 	go func() {
-		relay.Guest(ctx, ws, proxy, limits)
+		h.audit.Info(audit.RelayEnded, audit.Error(relay.Guest(ctx, ws, proxy, limits)))
 		cancel() // a dropped relay abandons the CDH call
 		close(relayed)
 	}()
@@ -109,7 +110,9 @@ func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy 
 // closeRelay records the relay's outcome, then tells the Security Operator.
 func (h *Helper) closeRelay(ws *websocket.Conn, code websocket.StatusCode, reason string, err error) {
 	h.audit.Info(audit.RelayClosed, "code", int(code), "reason", reason, audit.Error(err))
-	ws.Close(code, reason)
+	// The outcome is recorded. A failed close means the operator's side is
+	// already gone, and relay_ended records how the relay stopped.
+	_ = ws.Close(code, reason)
 }
 
 // Serve serves the Helper API on l until the unlock ends, then stops. It
@@ -134,7 +137,9 @@ func (h *Helper) Serve(l net.Listener, listenProxy func() (net.Listener, error),
 	case <-expired:
 		h.expire()
 	}
-	srv.Close()
+	// Close's error is from closing l; the helper is stopping either way,
+	// and Serve's own result comes next.
+	_ = srv.Close()
 	<-served
 	// Close does not wait for hijacked connections: wait for the last relay
 	// to tell its Security Operator the outcome.

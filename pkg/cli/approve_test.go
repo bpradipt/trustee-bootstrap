@@ -3,10 +3,12 @@ package cli_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -68,12 +70,38 @@ func TestApproveServesSharePayload(t *testing.T) {
 		t.Fatalf("Operator Verifiers started: %+v, want one with --kbs-binary", ws.started)
 	}
 	var got ceremony.SharePayload
-	if err := json.Unmarshal(ws.started[0].SharePayload, &got); err != nil {
+	if err := json.Unmarshal(ws.payloads[0], &got); err != nil {
 		t.Fatal(err)
+	}
+	// approve wipes its own copy once the Operator Verifier stops.
+	if p := ws.started[0].SharePayload; len(p) == 0 || slices.ContainsFunc(p, func(b byte) bool { return b != 0 }) {
+		t.Errorf("approve's Share payload after it returned = %q, want it zeroed", p)
 	}
 	want := f.payloads[1]
 	if got.Index != want.Index || got.KeyID != want.KeyID || string(got.Share) != string(want.Share) || got.BundleSHA256 != want.BundleSHA256 {
 		t.Errorf("Share payload = index %d bundle %s, want bob's for %s", got.Index, got.BundleSHA256, want.BundleSHA256)
+	}
+}
+
+// The Operator Verifier's run directory holds the Share payload: approve
+// fails when stop can't wipe it, even after the helper accepted the Share.
+func TestApproveReportsAFailedWipe(t *testing.T) {
+	f := keyCeremonyAndSeal(t)
+	var cvm memnet.Network
+	startTrusteeCVM(t, f, &cvm, io.Discard)
+	ws := &workstation{t: t, cvm: &cvm}
+	start := func(ctx context.Context, address string, opts verifier.Options) (string, func() error, error) {
+		addr, stop, err := ws.startStubVerifier(ctx, address, opts)
+		return addr, func() error { return errors.Join(stop(), errors.New("wipe failed")) }, err
+	}
+	client := &http.Client{Transport: &http.Transport{DialContext: cvm.DialContext}}
+	cmd := cli.NewTrusteeBootstrapCmdWith(client, ws.loopback.DialContext, start)
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"approve", "--endpoint", "http://" + helperAddr, "--policy", buildPolicy(t, f, "alice"),
+		"--share-file", filepath.Join(f.ceremonyDir, "alice.share")})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "wipe failed") {
+		t.Errorf("approve = %v, want the failed wipe", err)
 	}
 }
 
@@ -86,12 +114,12 @@ func TestApproveStopsTheOperatorVerifierOnSignal(t *testing.T) {
 		var cvm memnet.Network
 		startTrusteeCVM(t, f, &cvm, io.Discard)
 		stopped := false
-		start := func(ctx context.Context, _ string, _ verifier.Options) (string, func(), error) {
+		start := func(ctx context.Context, _ string, _ verifier.Options) (string, func() error, error) {
 			if err := syscall.Kill(os.Getpid(), sig); err != nil {
 				t.Fatal(err)
 			}
 			<-ctx.Done()
-			return "127.0.0.1:1", func() { stopped = true }, nil
+			return "127.0.0.1:1", func() error { stopped = true; return nil }, nil
 		}
 		client := &http.Client{Transport: &http.Transport{DialContext: cvm.DialContext}}
 		cmd := cli.NewTrusteeBootstrapCmdWith(client, (&memnet.Network{}).DialContext, start)

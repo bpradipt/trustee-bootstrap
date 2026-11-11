@@ -279,6 +279,40 @@ func TestWriteLoad(t *testing.T) {
 	}
 }
 
+// Load checks what Build checks: an edited policy file is refused before
+// approve starts anything.
+func TestLoadRefusesWhatBuildRefuses(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(p *policy.OperatorPolicy)
+		want string
+	}{
+		{"bundle digest not hex", func(p *policy.OperatorPolicy) { p.BundleSHA256 = "sha256:" + p.BundleSHA256 }, "bundle digest"},
+		{"bundle digest uppercase", func(p *policy.OperatorPolicy) { p.BundleSHA256 = strings.ToUpper(p.BundleSHA256) }, "bundle digest"},
+		{"Init-Data digest short", func(p *policy.OperatorPolicy) { p.InitDataSHA256 = p.InitDataSHA256[:62] }, "Init-Data digest"},
+		{"reference value name", func(p *policy.OperatorPolicy) { p.ReferenceValues["../kbs/x"] = []any{"x"} }, "reference value name"},
+		{"reference value missing", func(p *policy.OperatorPolicy) { delete(p.ReferenceValues, policy.RefTPMPCR11) }, policy.RefTPMPCR11},
+		{"unknown TEE type", func(p *policy.OperatorPolicy) { p.AcceptTEE = []string{"sev"} }, "no claim profile"},
+		{"untested marker dropped", func(p *policy.OperatorPolicy) { p.UntestedProfiles = false }, "untested"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := policy.Build(input(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.edit(&p)
+			dir := t.TempDir()
+			if err := policy.Write(dir, p); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := policy.Load(dir); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Load = %v, want an error naming %q", err, tt.want)
+			}
+		})
+	}
+}
+
 // A policy built with --allow-untested-profiles says so in its file, for a
 // reviewer, and keeps saying so through Load.
 func TestUntestedProfilesAreMarked(t *testing.T) {

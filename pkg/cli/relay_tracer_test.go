@@ -81,6 +81,7 @@ type workstation struct {
 	cvm      *memnet.Network
 	deny     bool               // the verifier's resource policy refuses release
 	started  []verifier.Options // every Operator Verifier approve started
+	payloads [][]byte           // the Share payload each one served, copied
 	output   []string           // everything the CLI printed
 }
 
@@ -99,7 +100,7 @@ func (w *workstation) run(args ...string) (string, error) {
 
 // startStubVerifier stands in for the Operator Verifier: it serves this
 // operator's Share payload at the KBS resource path, with no attestation.
-func (w *workstation) startStubVerifier(_ context.Context, address string, opts verifier.Options) (string, func(), error) {
+func (w *workstation) startStubVerifier(_ context.Context, address string, opts verifier.Options) (string, func() error, error) {
 	w.started = append(w.started, opts)
 	if host, _, err := net.SplitHostPort(address); err != nil || host != "127.0.0.1" {
 		w.t.Errorf("Operator Verifier listens on %q, want 127.0.0.1 only", address)
@@ -111,7 +112,9 @@ func (w *workstation) startStubVerifier(_ context.Context, address string, opts 
 	if err != nil {
 		return "", nil, err
 	}
-	payload := opts.SharePayload
+	// The real verifier copies the payload into its run directory.
+	payload := slices.Clone(opts.SharePayload)
+	w.payloads = append(w.payloads, payload)
 	srv := &http.Server{Handler: http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != kbsSharePath {
 			http.NotFound(rw, r)
@@ -126,7 +129,7 @@ func (w *workstation) startStubVerifier(_ context.Context, address string, opts 
 		}
 	})}
 	go srv.Serve(l)
-	return l.Addr().String(), func() { srv.Close() }, nil
+	return l.Addr().String(), srv.Close, nil
 }
 
 func (w *workstation) status(endpoint string) helper.Status {
@@ -284,9 +287,9 @@ func TestAuditRecordsCarryNoShare(t *testing.T) {
 
 	helperLog, cliLog := helperAudit.String(), strings.Join(ws.output, "")
 	for _, want := range []string{
-		`"msg":"state_changed","boot_id":`, `"state":"COLLECTING"`, `"state":"PUBLISHED"`,
-		`"msg":"relay_opened"`, `"msg":"relay_closed"`, `"reason":"accepted"`,
-		`"msg":"share_rejected","boot_id":`, `"index":2,"reason":"bundle_sha256`,
+		`"msg":"state_changed","boot_id":`, `"state":"COLLECTING"`, `"state":"UNSEALING"`, `"state":"PUBLISHED"`,
+		`"msg":"relay_opened"`, `"msg":"relay_closed"`, `"reason":"accepted"`, `"msg":"relay_ended"`,
+		`"msg":"share_rejected","boot_id":`, `"index":2,"error":"bundle_sha256`,
 		`"msg":"share_accepted","boot_id":`, `"index":3,"accepted":2`,
 	} {
 		if !strings.Contains(helperLog, want) {

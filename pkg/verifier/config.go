@@ -150,7 +150,7 @@ func CheckSecure(c Config) error {
 		errs = append(errs, errors.New("[attestation_token] insecure_header_jwk is true"))
 	}
 	if c.Admin.AuthorizationMode != AdminAuthenticated {
-		errs = append(errs, fmt.Errorf("[admin] authorization_mode is %q, not %s", c.Admin.AuthorizationMode, AdminAuthenticated))
+		errs = append(errs, errors.New("[admin] authorization_mode is not "+AdminAuthenticated))
 	}
 	return errors.Join(errs...)
 }
@@ -171,6 +171,10 @@ var KBSDefaultResourcePolicy string
 // config tree in dir, as Trustee will see it at root. `seal` runs them
 // before encrypting, and the Bootstrap Helper again before publishing,
 // because a bundle sealed with stock age skipped them.
+//
+// The tree's paths and values are plaintext metadata (spec §0.6), and the
+// helper's error reaches stderr and the audit records. So each check fails
+// with a fixed reason that names the check, never a value from the tree.
 func CheckSealedConfig(dir, root string) error {
 	tree, err := os.OpenRoot(dir)
 	if err != nil {
@@ -179,11 +183,11 @@ func CheckSealedConfig(dir, root string) error {
 	defer tree.Close()
 	b, err := tree.ReadFile(ConfigFile)
 	if err != nil {
-		return fmt.Errorf("read KBS config: %w", err)
+		return errors.New("KBS config: " + errNotInTree.Error())
 	}
 	var c Config
 	if err := toml.Unmarshal(b, &c); err != nil {
-		return fmt.Errorf("parse KBS config: %w", err)
+		return errors.New("KBS config is not valid TOML")
 	}
 	var insecureHTTP, sessions error
 	if c.HTTPServer.InsecureHTTP {
@@ -208,7 +212,7 @@ func checkSigner(tree *os.Root, root string, c Config) error {
 	_, certErr := readInTree(tree, root, s.CertPath)
 	var untrusted error
 	if !slices.Contains(c.AttestationToken.TrustedCertsPaths, s.CertPath) {
-		untrusted = fmt.Errorf("[attestation_token] trusted_certs_paths does not list the AS signer certificate %q", s.CertPath)
+		untrusted = errors.New("[attestation_token] trusted_certs_paths does not list the AS signer certificate")
 	}
 	return errors.Join(wrapErr("AS signer key", keyErr), wrapErr("AS signer certificate", certErr), untrusted)
 }
@@ -218,7 +222,7 @@ func checkSigner(tree *os.Root, root string, c Config) error {
 // that default when the key is missing.
 func checkResourcePolicy(tree *os.Root, root string, c Config) error {
 	if c.StorageBackend.StorageType != "LocalFs" {
-		return fmt.Errorf("[storage_backend] storage_type is %q, not LocalFs: KBS would not read the sealed resource policy", c.StorageBackend.StorageType)
+		return errors.New("[storage_backend] storage_type is not LocalFs: KBS would not read the sealed resource policy")
 	}
 	path := filepath.Join(c.StorageBackend.Backends.LocalFS.DirPath, "kbs", "resource-policy.rego")
 	policy, err := readInTree(tree, root, path)
@@ -227,10 +231,10 @@ func checkResourcePolicy(tree *os.Root, root string, c Config) error {
 	}
 	code := policyCode(string(policy))
 	if code == "" {
-		return fmt.Errorf("resource policy %s is empty", path)
+		return errors.New("resource policy is empty")
 	}
 	if code == policyCode(KBSDefaultResourcePolicy) {
-		return fmt.Errorf("resource policy %s is KBS's built-in default", path)
+		return errors.New("resource policy is KBS's built-in default")
 	}
 	return nil
 }
@@ -250,14 +254,24 @@ func policyCode(policy string) string {
 }
 
 // readInTree reads the file that Trustee, seeing the tree at root, finds at
-// path. A path outside root is not in the sealed tree.
+// path. A path outside root is not in the sealed tree. Its errors leave out
+// path, a value from the tree.
 func readInTree(tree *os.Root, root, path string) ([]byte, error) {
 	rel, err := filepath.Rel(root, path)
 	if err != nil || !filepath.IsLocal(rel) {
-		return nil, fmt.Errorf("%q is outside the sealed tree at %s", path, root)
+		return nil, errOutsideTree
 	}
-	return tree.ReadFile(rel)
+	b, err := tree.ReadFile(rel)
+	if err != nil {
+		return nil, errNotInTree
+	}
+	return b, nil
 }
+
+var (
+	errOutsideTree = errors.New("its path is outside the sealed tree")
+	errNotInTree   = errors.New("no readable file in the sealed tree")
+)
 
 // wrapErr names what err is about; nil stays nil.
 func wrapErr(what string, err error) error {

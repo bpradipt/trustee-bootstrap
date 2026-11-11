@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -35,14 +36,14 @@ type env struct {
 	dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	// startVerifier starts the Operator Verifier on address. It returns the
 	// address it listens on.
-	startVerifier func(ctx context.Context, address string, opts verifier.Options) (string, func(), error)
+	startVerifier func(ctx context.Context, address string, opts verifier.Options) (string, func() error, error)
 }
 
 // defaultEnv touches nothing outside the process: cococtl builds the tree
 // at startup for every command, so the container engine is looked up only
 // when approve starts the Operator Verifier.
 func defaultEnv() env {
-	start := func(ctx context.Context, address string, opts verifier.Options) (string, func(), error) {
+	start := func(ctx context.Context, address string, opts verifier.Options) (string, func() error, error) {
 		rt := verifier.Runtime{Engine: verifier.DefaultEngine(), Listen: net.Listen, Client: http.DefaultClient}
 		return rt.Start(ctx, address, opts)
 	}
@@ -64,6 +65,9 @@ func newApproveCmd(e env) *cobra.Command {
 				return err
 			}
 			share, opts, err := loadApproval(policyDir, shareFile, cmd.ErrOrStderr())
+			// The Operator Verifier has its own copy; wipe ours on the
+			// way out, whatever happens.
+			defer ceremony.Wipe(share.Share, opts.SharePayload)
 			if err != nil {
 				return err
 			}
@@ -148,7 +152,7 @@ func newStatusCmd(e env) *cobra.Command {
 
 // approve runs one Security Operator's flow (spec §4) within limits and
 // writes its audit records to log. It never prints the Share.
-func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareFile, opts verifier.Options, limits relay.Limits, log *slog.Logger) error {
+func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareFile, opts verifier.Options, limits relay.Limits, log *slog.Logger) (err error) {
 	st, err := e.status(ctx, endpoint)
 	if err != nil {
 		return err
@@ -164,9 +168,12 @@ func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareF
 		return fmt.Errorf("start Operator Verifier: %w", err)
 	}
 	log.Info(audit.VerifierStarted, "address", addr)
+	// A failed wipe leaves the Share payload on this machine: approve fails
+	// with it even when the helper accepted the Share.
 	defer func() {
-		stop()
-		log.Info(audit.VerifierStopped)
+		stopErr := stop()
+		log.Info(audit.VerifierStopped, audit.Error(stopErr))
+		err = errors.Join(err, stopErr)
 	}()
 	u, err := url.JoinPath(endpoint, helper.RelayPath)
 	if err != nil {

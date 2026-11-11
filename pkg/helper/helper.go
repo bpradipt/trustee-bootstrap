@@ -54,7 +54,10 @@ func (c CDH) SharePayload(ctx context.Context) (ceremony.SharePayload, error) {
 	if resp.StatusCode != http.StatusOK {
 		return p, fmt.Errorf("get Share payload from CDH: status %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	// A Share payload is a few hundred bytes. A longer answer is cut short
+	// and fails to parse.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPayloadSize))
+	defer ceremony.Wipe(body)
 	if err != nil {
 		return p, fmt.Errorf("read Share payload: %w", err)
 	}
@@ -64,12 +67,16 @@ func (c CDH) SharePayload(ctx context.Context) (ceremony.SharePayload, error) {
 	return p, nil
 }
 
+// maxPayloadSize caps the CDH answer the helper reads (64 KiB).
+const maxPayloadSize = 65536
+
 // State is the Bootstrap Helper's place in its state machine (spec §5).
 type State string
 
 // States a status request can observe.
 const (
 	StateCollecting State = "COLLECTING"
+	StateUnsealing  State = "UNSEALING"
 	StatePublished  State = "PUBLISHED"
 	StateFailed     State = "FAILED"
 )
@@ -165,25 +172,14 @@ func (h *Helper) CollectShare(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	shares, err := h.accept(p)
+	if err != nil || shares == nil {
+		return false, err
+	}
+	// UNSEALING: publish without the lock, so status still answers.
+	err = h.publish(shares)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.state != StateCollecting {
-		return false, fmt.Errorf("unlock already ended: %s", h.state)
-	}
-	if err := h.check(p); err != nil {
-		if !slices.Contains(h.rejected, p.Index) {
-			h.rejected = append(h.rejected, p.Index)
-		}
-		h.audit.Info(audit.ShareRejected, "index", p.Index, "reason", err.Error())
-		return false, fmt.Errorf("reject Share index %d: %w", p.Index, err)
-	}
-	h.shares = append(h.shares, p.Share)
-	h.accepted = append(h.accepted, p.Index)
-	h.audit.Info(audit.ShareAccepted, "index", p.Index, "accepted", len(h.accepted))
-	if len(h.shares) < h.manifest.Threshold {
-		return false, nil
-	}
-	err = h.publish()
 	h.state = StatePublished
 	if err != nil {
 		h.state = StateFailed
@@ -191,6 +187,37 @@ func (h *Helper) CollectShare(ctx context.Context) (bool, error) {
 	h.audit.Info(audit.StateChanged, "state", h.state, audit.Error(err))
 	close(h.done)
 	return err == nil, err
+}
+
+// accept counts p if it passes the COLLECTING checks, and wipes it if not.
+// At threshold it moves to UNSEALING and hands over the Shares; otherwise
+// it returns none.
+func (h *Helper) accept(p ceremony.SharePayload) ([][]byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.state != StateCollecting {
+		ceremony.Wipe(p.Share)
+		return nil, fmt.Errorf("unlock already ended: %s", h.state)
+	}
+	if err := h.check(p); err != nil {
+		ceremony.Wipe(p.Share)
+		if !slices.Contains(h.rejected, p.Index) {
+			h.rejected = append(h.rejected, p.Index)
+		}
+		h.audit.Info(audit.ShareRejected, "index", p.Index, audit.Error(err))
+		return nil, fmt.Errorf("reject Share index %d: %w", p.Index, err)
+	}
+	h.shares = append(h.shares, p.Share)
+	h.accepted = append(h.accepted, p.Index)
+	h.audit.Info(audit.ShareAccepted, "index", p.Index, "accepted", len(h.accepted))
+	if len(h.shares) < h.manifest.Threshold {
+		return nil, nil
+	}
+	shares := h.shares
+	h.shares = nil
+	h.state = StateUnsealing
+	h.audit.Info(audit.StateChanged, "state", h.state)
+	return shares, nil
 }
 
 // check applies the COLLECTING checks (spec §5) to a Share payload.
@@ -222,23 +249,22 @@ func (h *Helper) expire() {
 	if h.state != StateCollecting {
 		return
 	}
-	for _, s := range h.shares {
-		clear(s)
-	}
+	ceremony.Wipe(h.shares...)
 	h.shares = nil
 	h.state = StateFailed
-	h.audit.Info(audit.StateChanged, "state", h.state, "error", "deadline passed")
+	h.audit.Info(audit.StateChanged, "state", h.state, audit.Error(errDeadline))
 	close(h.done)
 }
 
-// publish unseals into a staging directory beside out, runs the sealed-config
-// checks, marks it complete, then renames it into place. On failure it wipes
-// the staging directory.
-func (h *Helper) publish() error {
-	id, err := ceremony.Combine(h.shares)
-	for _, s := range h.shares {
-		clear(s)
-	}
+var errDeadline = errors.New("deadline passed")
+
+// publish combines shares, then wipes them. It unseals into a staging
+// directory beside out, runs the sealed-config checks, marks the tree
+// complete, then renames it into place. On failure it wipes the staging
+// directory.
+func (h *Helper) publish(shares [][]byte) error {
+	id, err := ceremony.Combine(shares)
+	ceremony.Wipe(shares...)
 	if err != nil {
 		return err
 	}
