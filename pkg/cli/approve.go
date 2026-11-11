@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -62,7 +63,7 @@ func newApproveCmd(e env) *cobra.Command {
 			if err := limits.Check(); err != nil {
 				return err
 			}
-			share, opts, err := loadApproval(policyDir, shareFile)
+			share, opts, err := loadApproval(policyDir, shareFile, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -91,9 +92,14 @@ func newApproveCmd(e env) *cobra.Command {
 	return cmd
 }
 
+// untestedWarning is what approve prints for an Operator Policy built with
+// --allow-untested-profiles.
+const untestedWarning = "warning: this Operator Policy accepts untested claim profiles; it is not a production Operator Policy"
+
 // loadApproval reads the Share file and the Operator Policy and checks the
-// Share against its Share Commitment, before anything starts.
-func loadApproval(policyDir, shareFile string) (ceremony.ShareFile, verifier.Options, error) {
+// Share against its Share Commitment, before anything starts. It writes a
+// warning to warn when the policy accepts untested claim profiles.
+func loadApproval(policyDir, shareFile string, warn io.Writer) (ceremony.ShareFile, verifier.Options, error) {
 	share, err := readJSONFile[ceremony.ShareFile](shareFile, "Share file")
 	if err != nil {
 		return share, verifier.Options{}, err
@@ -109,11 +115,14 @@ func loadApproval(policyDir, shareFile string) (ceremony.ShareFile, verifier.Opt
 	if err != nil {
 		return share, verifier.Options{}, fmt.Errorf("encode Share payload: %w", err)
 	}
+	if p.UntestedProfiles {
+		_, err = fmt.Fprintln(warn, untestedWarning)
+	}
 	return share, verifier.Options{
 		ResourcePolicy:  p.ResourcePolicy,
 		ReferenceValues: p.ReferenceValues,
 		SharePayload:    payload,
-	}, nil
+	}, err
 }
 
 func newStatusCmd(e env) *cobra.Command {

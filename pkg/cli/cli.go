@@ -3,12 +3,10 @@
 package cli
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -159,17 +157,15 @@ func readJSONFile[T any](path, what string) (T, error) {
 }
 
 // sealToFile seals dir into output and returns the bundle's hex SHA-256.
+// The bundle is at most seal.MaxSize, so it is sealed in memory first and
+// a failed seal writes nothing.
 func sealToFile(output, dir, recipient string) (string, error) {
-	f, err := os.Create(output)
-	if err != nil {
-		return "", fmt.Errorf("create %s: %w", output, err)
+	var b bytes.Buffer
+	if err := seal.Seal(&b, dir, recipient); err != nil {
+		return "", err
 	}
-	sum := sha256.New()
-	if err := seal.Seal(io.MultiWriter(f, sum), dir, recipient); err != nil {
-		return "", errors.Join(err, f.Close())
+	if err := os.WriteFile(output, b.Bytes(), 0o644); err != nil {
+		return "", fmt.Errorf("write %s: %w", output, err)
 	}
-	if err := f.Close(); err != nil {
-		return "", fmt.Errorf("close %s: %w", output, err)
-	}
-	return hex.EncodeToString(sum.Sum(nil)), nil
+	return ceremony.SHA256Hex(b.Bytes()), nil
 }

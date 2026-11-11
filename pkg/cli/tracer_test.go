@@ -20,6 +20,7 @@ import (
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/cli"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
@@ -163,7 +164,7 @@ func assertNoIdentityOnDisk(t *testing.T, dir string) {
 func newHelper(t *testing.T, f unlockFixture, payloads ...ceremony.SharePayload) (*helper.Helper, string) {
 	t.Helper()
 	out := f.out
-	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, fakeCDH(t, payloads...), audit.New(io.Discard))
+	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, helper.Output{Dir: out, UID: os.Getuid(), GID: os.Getgid()}, fakeCDH(t, payloads...), audit.New(io.Discard))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,6 +231,23 @@ func TestSealRejectsMissingManifest(t *testing.T) {
 	_, err := run(t, "seal", "--manifest", filepath.Join(dir, "none.json"), "--output", filepath.Join(dir, "b.age"), dir)
 	if err == nil {
 		t.Fatal("seal accepted a missing manifest")
+	}
+}
+
+// A tree whose Sealed Bundle would pass the 1 MiB size cap gets no bundle.
+func TestSealRefusesABundleOverTheSizeCap(t *testing.T) {
+	ceremonyDir := t.TempDir()
+	mustRun(t, "ceremony", "split", "--threshold", "2", "--holders", "alice,bob", "--out-dir", ceremonyDir)
+	tree := trusteetest.Tree(t, verifier.TrusteeRoot)
+	if err := os.WriteFile(filepath.Join(tree, "big"), make([]byte, seal.MaxSize), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(t.TempDir(), "b.age")
+	if _, err := run(t, "seal", "--manifest", filepath.Join(ceremonyDir, cli.ManifestFile), "--output", bundle, tree); err == nil {
+		t.Fatal("seal sealed a tree over the size cap")
+	}
+	if _, err := os.Stat(bundle); !os.IsNotExist(err) {
+		t.Error("seal wrote a bundle")
 	}
 }
 

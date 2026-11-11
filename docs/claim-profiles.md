@@ -39,7 +39,11 @@ Notes:
 
 No profile has passed a real-TEE run, so all five are untested. The four hardware profiles come from reading the verifier source. The tpm profile has passed swtpm runs, but swtpm keys live on the host, and spec §11 says synthetic or TPM-only evidence never counts as security completion. A production Operator Policy may accept only a TEE type whose profile has passed a real-TEE run (spec §9 Phase 3).
 
-So `policy build` refuses every profile unless the Security Operator passes `--allow-untested-profiles`. That flag says the policy is not a production Operator Policy. Nothing else marks it. The e2e scripts pass it, because they run on swtpm. A profile becomes tested only when ticket 17's real-TEE run passes on that TEE type: set `untested: false` in `pkg/policy/policy.go` and record the run in the table above.
+So `policy build` refuses every profile unless the Security Operator passes `--allow-untested-profiles`. That flag says the policy is not a production Operator Policy. The policy records it as `"untested_profiles": true` in `operator-policy.json`, and `approve` prints a warning when it loads such a policy. The e2e scripts pass it, because they run on swtpm. A profile becomes tested only when ticket 17's real-TEE run passes on that TEE type: set `untested: false` in `pkg/policy/policy.go` and record the run in the table above.
+
+## Attestation collateral (gap)
+
+TDX and SNP evidence verifies only against the vendor's collateral: Intel PCS or a PCCS for TDX, AMD KDS or offline VCEK/VLEK files for SNP (spec §6). The Operator Verifier config that `approve` generates sets none of Trustee's collateral settings, so it uses Trustee's built-in defaults. Nothing here has run against real collateral. Ticket 17's real-TEE run must set the collateral source through Trustee's own settings in the generated Operator Verifier config before a TDX or SNP profile can pass.
 
 ## Fixtures (AT-28)
 

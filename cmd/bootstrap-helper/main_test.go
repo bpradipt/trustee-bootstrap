@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -129,6 +130,12 @@ func openRelay(t *testing.T, n *memnet.Network) websocket.StatusCode {
 	}
 }
 
+// owner is the --owner-uid and --owner-gid args for the test's own user, the
+// only owner a test that is not root can hand the tree to.
+func owner() []string {
+	return []string{"--owner-uid", strconv.Itoa(os.Getuid()), "--owner-gid", strconv.Itoa(os.Getgid())}
+}
+
 func TestRunFailsWithExitOne(t *testing.T) {
 	f := fixture(t)
 	out := filepath.Join(t.TempDir(), "trustee")
@@ -149,7 +156,30 @@ func TestRunFailsWithExitOne(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if code := run(tt.args, refuse, fakeCDH(t)); code != 1 {
+			if code := run(append(tt.args, owner()...), refuse, fakeCDH(t)); code != 1 {
+				t.Errorf("run exited %d, want 1", code)
+			}
+		})
+	}
+}
+
+// Trustee's UID and GID have no default: the Kata Agent policy pins them,
+// and a dropped arg must not leave the tree to whoever runs the helper.
+func TestRunRefusesMissingOwner(t *testing.T) {
+	f := fixture(t)
+	base := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", f.out}
+	for name, args := range map[string][]string{
+		"--owner-uid missing":  {"--owner-gid", "0"},
+		"--owner-gid missing":  {"--owner-uid", "0"},
+		"--owner-uid negative": {"--owner-uid", "-1", "--owner-gid", "0"},
+		"--owner-gid negative": {"--owner-uid", "0", "--owner-gid", "-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			listen := func(string, string) (net.Listener, error) {
+				t.Error("the helper listened without an owner for the tree")
+				return nil, errors.New("no listening")
+			}
+			if code := run(append(base, args...), listen, fakeCDH(t)); code != 1 {
 				t.Errorf("run exited %d, want 1", code)
 			}
 		})
@@ -171,6 +201,7 @@ func TestRunServesOnListenAddress(t *testing.T) {
 		return l, l.Close()
 	}
 	args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", t.TempDir(), "--listen", ":9443"}
+	args = append(args, owner()...)
 	if code := run(args, dead, fakeCDH(t)); code != 1 {
 		t.Errorf("run exited %d, want 1", code)
 	}
@@ -190,6 +221,7 @@ func TestRunRefusesDisabledRelayLimits(t *testing.T) {
 			return nil, errors.New("listen refused")
 		}
 		args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", t.TempDir(), flag}
+		args = append(args, owner()...)
 		if code := run(args, listen, fakeCDH(t)); code != 1 || len(listened) != 0 {
 			t.Errorf("%s: run exited %d after listening on %v, want 1 before listening", flag, code, listened)
 		}
@@ -200,6 +232,7 @@ func TestRunFailsAtDeadline(t *testing.T) {
 	f := fixture(t)
 	var n memnet.Network
 	args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", t.TempDir(), "--deadline", "1ms"}
+	args = append(args, owner()...)
 	if code := run(args, n.Listen, fakeCDH(t)); code != 1 {
 		t.Errorf("run exited %d, want 1", code)
 	}
@@ -220,6 +253,7 @@ func TestRunUnsealsTheBundleReadInLocked(t *testing.T) {
 	}
 	out := f.out
 	args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", out, "--listen", "helper:8090"}
+	args = append(args, owner()...)
 	code := make(chan int, 1)
 	go func() { code <- run(args, listen, fakeCDH(t, f.payloads...)) }()
 
@@ -256,6 +290,7 @@ func TestRunExitsZeroWhenAlreadyPublished(t *testing.T) {
 		return nil, errors.New("no listening")
 	}
 	args := []string{"--manifest", "/gone/ceremony.json", "--bundle", "/gone/bundle.age", "--out", out}
+	args = append(args, owner()...)
 	if code := run(args, listen, fakeCDH(t)); code != 0 {
 		t.Errorf("run exited %d, want 0", code)
 	}
@@ -277,6 +312,7 @@ func TestRunWipesLeftoverStaging(t *testing.T) {
 		return nil, errors.New("listen refused")
 	}
 	args := []string{"--manifest", f.manifest, "--manifest-sha256", f.manifestSHA256, "--bundle", f.bundle, "--out", f.out}
+	args = append(args, owner()...)
 	if code := run(args, refuse, fakeCDH(t)); code != 1 {
 		t.Errorf("run exited %d, want 1", code)
 	}

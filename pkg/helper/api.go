@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -34,7 +35,12 @@ const (
 // the relay with the outcome. limits bound each relay.
 func (h *Helper) Handler(listenProxy func() (net.Listener, error), limits relay.Limits) http.Handler {
 	mux := http.NewServeMux()
+	var statusLimit rateLimit
 	mux.HandleFunc("GET "+StatusPath, func(w http.ResponseWriter, _ *http.Request) {
+		if !statusLimit.allow(time.Now()) {
+			http.Error(w, "too many status requests", http.StatusTooManyRequests)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(h.Status())
 	})
@@ -42,6 +48,29 @@ func (h *Helper) Handler(listenProxy func() (net.Listener, error), limits relay.
 		h.serveRelay(w, r, listenProxy, limits)
 	})
 	return mux
+}
+
+// StatusPerSecond is how many status requests the Helper API answers each
+// second, from all clients together (spec §4).
+const StatusPerSecond = 10
+
+// rateLimit allows StatusPerSecond calls in each one-second window.
+// ponytail: one global window, so a noisy client can crowd out the others
+// for a second; key it by client address if that matters.
+type rateLimit struct {
+	mu    sync.Mutex
+	start time.Time // the current window's start
+	n     int       // calls in it
+}
+
+func (r *rateLimit) allow(now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if now.Sub(r.start) >= time.Second {
+		r.start, r.n = now, 0
+	}
+	r.n++
+	return r.n <= StatusPerSecond
 }
 
 func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy func() (net.Listener, error), limits relay.Limits) {

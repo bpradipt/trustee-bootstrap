@@ -125,7 +125,7 @@ helper_pod() {
 		  containers:
 		  - name: helper
 		    image: $PROBE_IMAGE
-		    command: ["sh", "-euc", "cd /tmp && for f in bootstrap-helper ceremony.json bundle.age; do wget -q http://$gw:$FILES_PORT/\$f; done && chmod +x bootstrap-helper && exec ./bootstrap-helper --manifest ceremony.json --manifest-sha256 $manifest_sha256 --bundle bundle.age --out /tmp/trustee --listen :8080 --proxy-port 8081"]
+		    command: ["sh", "-euc", "cd /tmp && for f in bootstrap-helper ceremony.json bundle.age; do wget -q http://$gw:$FILES_PORT/\$f; done && chmod +x bootstrap-helper && exec ./bootstrap-helper --manifest ceremony.json --manifest-sha256 $manifest_sha256 --bundle bundle.age --out /tmp/trustee --owner-uid 0 --owner-gid 0 --listen :8080 --proxy-port 8081"]
 		---
 		apiVersion: v1
 		kind: Service

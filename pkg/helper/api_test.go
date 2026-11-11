@@ -4,9 +4,11 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -84,6 +86,33 @@ func TestRelayClosesWithOutcome(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Status answers StatusPerSecond requests a second, from all clients
+// together, and 429 to the rest.
+func TestStatusIsRateLimited(t *testing.T) {
+	manifest, bundle, _, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t))
+	synctest.Test(t, func(t *testing.T) {
+		api := h.Handler(nil, relay.DefaultLimits())
+		get := func() int {
+			rec := httptest.NewRecorder()
+			api.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, helper.StatusPath, nil))
+			return rec.Code
+		}
+		for i := range helper.StatusPerSecond {
+			if code := get(); code != http.StatusOK {
+				t.Fatalf("request %d: HTTP %d, want 200", i+1, code)
+			}
+		}
+		if code := get(); code != http.StatusTooManyRequests {
+			t.Fatalf("request %d in one second: HTTP %d, want 429", helper.StatusPerSecond+1, code)
+		}
+		time.Sleep(time.Second)
+		if code := get(); code != http.StatusOK {
+			t.Fatalf("a second later: HTTP %d, want 200", code)
+		}
+	})
 }
 
 func TestServeStopsOncePublished(t *testing.T) {

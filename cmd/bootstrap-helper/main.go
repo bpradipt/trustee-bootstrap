@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
@@ -42,51 +43,76 @@ func run(args []string, listen func(network, address string) (net.Listener, erro
 }
 
 func serve(args []string, listen func(network, address string) (net.Listener, error), cdh *http.Client) error {
-	fs := flag.NewFlagSet("bootstrap-helper", flag.ContinueOnError)
-	manifestPath := fs.String("manifest", "", "Ceremony Manifest (ceremony.json)")
-	manifestSHA256 := fs.String("manifest-sha256", "", "hex SHA-256 of the Ceremony Manifest; required")
-	bundlePath := fs.String("bundle", "", "Sealed Bundle")
-	out := fs.String("out", "", "directory to publish Trustee's config tree into")
-	addr := fs.String("listen", ":8080", "Helper API listen address")
-	proxyPort := fs.Int("proxy-port", 8081, "guest-loopback proxy port on 127.0.0.1: the KBS URL in Init-Data")
-	deadline := fs.Duration("deadline", 0, "discard accepted Shares and fail after this long; 0 means no deadline")
-	limits := relay.DefaultLimits()
-	fs.DurationVar(&limits.Idle, "relay-idle-timeout", limits.Idle, "end a relay after this long with no traffic; may be lowered, not raised")
-	fs.DurationVar(&limits.Total, "relay-total-timeout", limits.Total, "end a relay after this long; may be lowered, not raised")
-	if err := fs.Parse(args); err != nil {
+	f, err := parseFlags(args)
+	if err != nil {
 		return err
-	}
-	if err := limits.Check(); err != nil {
-		return err
-	}
-	if *out == "" {
-		return errors.New("--out is required")
 	}
 	// A restart after the rename finds the published tree: nothing to do.
-	published, err := helper.Recover(*out)
+	published, err := helper.Recover(f.out.Dir)
 	if err != nil || published {
 		return err
 	}
 	// LOCKED: read each untrusted mount once. The host can swap the files at
 	// any time, so the helper never opens them again.
-	manifest, err := readCapped(*manifestPath)
+	manifest, err := readCapped(f.manifest)
 	if err != nil {
 		return fmt.Errorf("read ceremony manifest: %w", err)
 	}
-	bundle, err := readCapped(*bundlePath)
+	bundle, err := readCapped(f.bundle)
 	if err != nil {
 		return fmt.Errorf("read sealed bundle: %w", err)
 	}
-	h, err := helper.New(manifest, *manifestSHA256, bundle, *out, helper.CDH{URL: cdhURL, Client: cdh}, audit.New(os.Stderr))
+	h, err := helper.New(manifest, f.manifestSHA256, bundle, f.out, helper.CDH{URL: cdhURL, Client: cdh}, audit.New(os.Stderr))
 	if err != nil {
 		return err
 	}
-	l, err := listen("tcp", *addr)
+	l, err := listen("tcp", f.listen)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	proxyAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(*proxyPort))
-	return h.Serve(l, func() (net.Listener, error) { return listen("tcp", proxyAddr) }, *deadline, limits)
+	proxyAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(f.proxyPort))
+	return h.Serve(l, func() (net.Listener, error) { return listen("tcp", proxyAddr) }, f.deadline, f.limits)
+}
+
+// flags are the helper's args. The Kata Agent policy pins every one.
+type flags struct {
+	manifest, manifestSHA256, bundle, listen string
+	out                                      helper.Output
+	proxyPort                                int
+	deadline                                 time.Duration
+	limits                                   relay.Limits
+}
+
+func parseFlags(args []string) (flags, error) {
+	var f flags
+	fs := flag.NewFlagSet("bootstrap-helper", flag.ContinueOnError)
+	fs.StringVar(&f.manifest, "manifest", "", "Ceremony Manifest (ceremony.json)")
+	fs.StringVar(&f.manifestSHA256, "manifest-sha256", "", "hex SHA-256 of the Ceremony Manifest; required")
+	fs.StringVar(&f.bundle, "bundle", "", "Sealed Bundle")
+	fs.StringVar(&f.out.Dir, "out", "", "directory to publish Trustee's config tree into")
+	fs.IntVar(&f.out.UID, "owner-uid", -1, "Trustee's UID, which gets the published tree; required")
+	fs.IntVar(&f.out.GID, "owner-gid", -1, "Trustee's GID, which gets the published tree; required")
+	fs.StringVar(&f.listen, "listen", ":8080", "Helper API listen address")
+	fs.IntVar(&f.proxyPort, "proxy-port", 8081, "guest-loopback proxy port on 127.0.0.1: the KBS URL in Init-Data")
+	fs.DurationVar(&f.deadline, "deadline", 0, "discard accepted Shares and fail after this long; 0 means no deadline")
+	f.limits = relay.DefaultLimits()
+	fs.DurationVar(&f.limits.Idle, "relay-idle-timeout", f.limits.Idle, "end a relay after this long with no traffic; may be lowered, not raised")
+	fs.DurationVar(&f.limits.Total, "relay-total-timeout", f.limits.Total, "end a relay after this long; may be lowered, not raised")
+	if err := fs.Parse(args); err != nil {
+		return f, err
+	}
+	if err := f.limits.Check(); err != nil {
+		return f, err
+	}
+	if f.out.Dir == "" {
+		return f, errors.New("--out is required")
+	}
+	// No default: a dropped arg must not hand the tree to whoever runs the
+	// helper.
+	if f.out.UID < 0 || f.out.GID < 0 {
+		return f, errors.New("--owner-uid and --owner-gid are required")
+	}
+	return f, nil
 }
 
 // readCapped reads the file at path, refusing one over maxFileSize.

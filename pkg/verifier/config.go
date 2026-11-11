@@ -123,7 +123,7 @@ func DefaultConfig(root, socket string) Config {
 	c.Admin.Authorization.RegexACL.ACLs = []ACL{{Role: "admin", AllowedEndpoints: "^/kbs/v0/.+$"}}
 	c.StorageBackend.StorageType = "LocalFs"
 	c.StorageBackend.Backends.LocalFS.DirPath = filepath.Join(root, StorageDir)
-	c.SessionStorageType = "Memory"
+	c.SessionStorageType = SessionStorageMemory
 	c.Plugins = []Plugin{{Name: "resource", StorageBackendType: "kvstorage"}}
 	return c
 }
@@ -185,12 +185,20 @@ func CheckSealedConfig(dir, root string) error {
 	if err := toml.Unmarshal(b, &c); err != nil {
 		return fmt.Errorf("parse KBS config: %w", err)
 	}
-	var insecureHTTP error
+	var insecureHTTP, sessions error
 	if c.HTTPServer.InsecureHTTP {
 		insecureHTTP = errors.New("[http_server] insecure_http is true")
 	}
-	return errors.Join(CheckSecure(c), insecureHTTP, checkSigner(tree, root, c), checkResourcePolicy(tree, root, c))
+	// Sessions elsewhere would put RCAR state on the published tree or
+	// outside the CVM (spec §7).
+	if c.SessionStorageType != SessionStorageMemory {
+		sessions = errors.New("session_storage_type is not " + SessionStorageMemory)
+	}
+	return errors.Join(CheckSecure(c), insecureHTTP, sessions, checkSigner(tree, root, c), checkResourcePolicy(tree, root, c))
 }
+
+// SessionStorageMemory is KBS's in-memory session storage.
+const SessionStorageMemory = "Memory"
 
 // checkSigner requires the AS token signer's key and certificate in the
 // tree, and KBS to trust that certificate. Otherwise KBS verifies no token.

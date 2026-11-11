@@ -61,6 +61,9 @@ func TestApproveServesSharePayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(strings.Join(ws.output, ""), "not a production Operator Policy") {
+		t.Error("approve printed no warning for a policy with untested claim profiles")
+	}
 	if len(ws.started) != 1 || ws.started[0].KBSBinary != "/opt/kbs" {
 		t.Fatalf("Operator Verifiers started: %+v, want one with --kbs-binary", ws.started)
 	}

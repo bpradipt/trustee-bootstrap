@@ -38,6 +38,7 @@ Today no claim profile has passed a real-TEE run (`docs/claim-profiles.md`), so 
    sed "s|@HELPER_IMAGE@|$HELPER_IMAGE|; s|@MANIFEST_SHA256@|$MANIFEST_SHA256|" deploy/examples/trustee-cvm.yaml >trustee-cvm.yaml
    cp deploy/examples/init-data.toml init-data.toml
    ```
+   The helper hands the published tree to Trustee's UID and GID, pinned as `--owner-uid=0` and `--owner-gid=0`: the pinned KBS image runs as root. If your Trustee image runs as another user, change both args in your copy before step 4.
 4. Run genpolicy. It writes the Kata Agent policy into the Init-Data and puts the Init-Data into the pod's `cc_init_data` annotation:
    ```sh
    "$GP/genpolicy" -y trustee-cvm.yaml -p "$GP/rules.rego" -j "$GP" --initdata-path=init-data.toml
@@ -75,6 +76,7 @@ Today no claim profile has passed a real-TEE run (`docs/claim-profiles.md`), so 
    ```sh
    sha256sum ceremony.json                                  # the published value
    grep -o -- '--manifest-sha256=[0-9a-f]*' init.toml | sort -u   # the same value
+   grep -o -- '--owner-[ug]id=[0-9]*' init.toml | sort -u        # Trustee's UID and GID: 0 for the pinned KBS image
    grep -o 'bootstrap-helper@sha256:[0-9a-f]*' init.toml | sort -u  # HELPER_IMAGE's digest
    grep -o 'key-broker-service[^"]*' init.toml | sort -u   # the KBS digest in docs/upstream-pins.md
    grep -n 'default ExecProcessRequest\|default ReadStreamRequest' init.toml  # both := false

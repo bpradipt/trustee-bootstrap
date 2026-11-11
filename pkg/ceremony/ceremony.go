@@ -82,8 +82,14 @@ func (m Manifest) CommitmentFor(index int) (string, error) {
 
 // Commitment returns the Share Commitment of a Share.
 func Commitment(share []byte) string {
-	sum := sha256.Sum256(share)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + SHA256Hex(share)
+}
+
+// SHA256Hex is b's SHA-256 in lowercase hex: a Sealed Bundle's or Ceremony
+// Manifest's digest as seal prints it and --manifest-sha256 pins it.
+func SHA256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // Split generates a bootstrap key pair and splits its identity into one

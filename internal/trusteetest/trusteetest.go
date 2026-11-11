@@ -65,6 +65,7 @@ var Violations = []Violation{
 	}},
 	{"storage outside the tree", "outside the sealed tree", editConfig(func(c *verifier.Config) { c.StorageBackend.Backends.LocalFS.DirPath = "/opt/kbs" })},
 	{"storage not LocalFs", "storage_type", editConfig(func(c *verifier.Config) { c.StorageBackend.StorageType = "Memory" })},
+	{"sessions not in memory", "session_storage_type", editConfig(func(c *verifier.Config) { c.SessionStorageType = "Postgres" })},
 	{"empty resource policy", "empty", writePolicy("# allow nothing\n\n")},
 	{"default resource policy", "built-in default", writePolicy(verifier.KBSDefaultResourcePolicy)},
 	{"default resource policy, reformatted", "built-in default", writePolicy(strings.ReplaceAll(
