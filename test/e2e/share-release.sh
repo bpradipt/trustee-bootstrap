@@ -47,13 +47,19 @@ cleanup() {
 trap cleanup EXIT
 
 # The Ceremony Authority splits 2-of-3; the Infrastructure Operator seals a
-# one-file tree.
+# minimal tree that passes the sealed-config checks where the helper below
+# publishes it (/tmp/trustee). No KBS runs on it, so the signer files are
+# placeholders.
 setup() {
-	mkdir -p "$work/bin" "$work/files" "$work/tree" "$work/ceremony"
+	mkdir -p "$work/bin" "$work/files" "$work/tree/storage/kbs" "$work/ceremony"
 	CGO_ENABLED=0 "$GO" build -C "$repo" -o "$work/bin/" ./cmd/trustee-bootstrap ./cmd/bootstrap-helper
 	tb ceremony split --threshold 2 --holders alice,bob,carol --out-dir "$work/ceremony" >/dev/null
-	echo 'package policy' >"$work/tree/resource.rego"
-	bundle_sha256=$(tb seal --manifest "$work/ceremony/ceremony.json" --output "$work/files/bundle.age" "$work/tree")
+	sed 's#/trustee/config#/tmp/trustee#' "$repo/deploy/examples/trustee-config/kbs.toml" >"$work/tree/kbs.toml"
+	echo placeholder >"$work/tree/as-signer.key"
+	echo placeholder >"$work/tree/as-signer.crt"
+	printf 'package policy\n\ndefault allow := false\n' >"$work/tree/storage/kbs/resource-policy.rego"
+	bundle_sha256=$(tb seal --manifest "$work/ceremony/ceremony.json" --output "$work/files/bundle.age" \
+		--root /tmp/trustee "$work/tree")
 	manifest_sha256=$(sha256sum "$work/ceremony/ceremony.json" | cut -d" " -f1)
 	cp "$work/ceremony/ceremony.json" "$work/bin/bootstrap-helper" "$work/files/"
 

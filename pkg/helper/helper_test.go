@@ -13,9 +13,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/trusteetest"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 // serveInProcess is an http.RoundTripper that hands each request to a handler.
@@ -44,19 +46,24 @@ func fakeCDH(t *testing.T, payloads ...ceremony.SharePayload) helper.CDH {
 	return helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}}
 }
 
-// ceremonyFixture runs a 2-of-3 Key Ceremony and seals a one-file tree.
-func ceremonyFixture(t *testing.T) (manifest, bundle []byte, payloads []ceremony.SharePayload) {
+// ceremonyFixture runs a 2-of-3 Key Ceremony and seals a Trustee config
+// tree that Trustee will see at out.
+func ceremonyFixture(t *testing.T) (manifest, bundle []byte, payloads []ceremony.SharePayload, out string) {
+	t.Helper()
+	out = filepath.Join(t.TempDir(), "trustee")
+	return sealedFixture(t, trusteetest.Tree(t, out), out)
+}
+
+// sealedFixture runs a 2-of-3 Key Ceremony and seals tree with the age
+// library, as stock age would: without the sealed-config checks.
+func sealedFixture(t *testing.T, tree, out string) (manifest, bundle []byte, payloads []ceremony.SharePayload, _ string) {
 	t.Helper()
 	m, files, err := ceremony.Split(2, []string{"alice", "bob", "carol"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "kbs-config.toml"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	var b bytes.Buffer
-	if err := seal.Seal(&b, src, m.Recipient); err != nil {
+	if err := seal.Seal(&b, tree, m.Recipient); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err = json.Marshal(m)
@@ -66,7 +73,7 @@ func ceremonyFixture(t *testing.T) (manifest, bundle []byte, payloads []ceremony
 	for _, f := range files {
 		payloads = append(payloads, ceremony.SharePayload{ShareFile: f, BundleSHA256: digest(b.Bytes())})
 	}
-	return manifest, b.Bytes(), payloads
+	return manifest, b.Bytes(), payloads, out
 }
 
 // digest is the hex SHA-256 that --manifest-sha256 and bundle_sha256 carry.
@@ -75,19 +82,73 @@ func digest(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func newHelper(t *testing.T, manifest, bundle []byte, cdh helper.CDH) (*helper.Helper, string) {
+func newHelper(t *testing.T, manifest, bundle []byte, out string, cdh helper.CDH) *helper.Helper {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "trustee")
 	h, err := helper.New(manifest, digest(manifest), bundle, out, cdh)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return h, out
+	return h
+}
+
+// AT-27: a bundle sealed with stock age skipped the sealed-config checks.
+// The helper runs them before publishing, so each violation fails the
+// unlock, and neither the tree nor its staging directory remains.
+func TestSealedConfigViolationPublishesNothing(t *testing.T) {
+	for _, v := range trusteetest.Violations {
+		t.Run(v.Name, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "trustee")
+			tree := trusteetest.Tree(t, out)
+			v.Apply(t, tree)
+			manifest, bundle, payloads, _ := sealedFixture(t, tree, out)
+			h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[0], payloads[1]))
+
+			if _, err := h.CollectShare(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			published, err := h.CollectShare(t.Context())
+			if published || err == nil || !strings.Contains(err.Error(), v.Want) {
+				t.Fatalf("CollectShare = %v, %v; want the %s check to fail", published, err, v.Want)
+			}
+			if got := h.Status().State; got != helper.StateFailed {
+				t.Errorf("state = %s, want %s", got, helper.StateFailed)
+			}
+			for _, dir := range []string{out, out + ".staging"} {
+				if _, err := os.Stat(dir); !os.IsNotExist(err) {
+					t.Errorf("%s exists after a failed unlock", dir)
+				}
+			}
+		})
+	}
+}
+
+// AT-14: a tree that passes the checks but carries a symlink fails in
+// extraction, and the partly extracted staging directory is wiped.
+func TestBoobyTrappedTreePublishesNothing(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "trustee")
+	tree := trusteetest.Tree(t, out)
+	if err := os.Symlink("/etc/passwd", filepath.Join(tree, "zz-link")); err != nil {
+		t.Fatal(err)
+	}
+	manifest, bundle, payloads, _ := sealedFixture(t, tree, out)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[0], payloads[1]))
+
+	if _, err := h.CollectShare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if published, err := h.CollectShare(t.Context()); published || err == nil || !strings.Contains(err.Error(), "zz-link") {
+		t.Fatalf("CollectShare = %v, %v; want the symlink refused", published, err)
+	}
+	for _, dir := range []string{out, out + ".staging"} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("%s exists after a failed unlock", dir)
+		}
+	}
 }
 
 func TestTwoSharesPublishTree(t *testing.T) {
-	manifest, bundle, payloads := ceremonyFixture(t)
-	h, out := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[2]))
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[0], payloads[2]))
 
 	for i, want := range []bool{false, true} {
 		published, err := h.CollectShare(t.Context())
@@ -98,7 +159,7 @@ func TestTwoSharesPublishTree(t *testing.T) {
 			t.Fatalf("CollectShare %d: published = %v, want %v", i+1, published, want)
 		}
 	}
-	for _, name := range []string{"kbs-config.toml", helper.CompletionMarker} {
+	for _, name := range []string{verifier.ConfigFile, verifier.ResourcePolicyPath, helper.CompletionMarker} {
 		if _, err := os.Stat(filepath.Join(out, name)); err != nil {
 			t.Errorf("published tree: %v", err)
 		}
@@ -109,8 +170,8 @@ func TestTwoSharesPublishTree(t *testing.T) {
 }
 
 func TestOneShareStaysLocked(t *testing.T) {
-	manifest, bundle, payloads := ceremonyFixture(t)
-	h, out := newHelper(t, manifest, bundle, fakeCDH(t, payloads[1]))
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[1]))
 
 	published, err := h.CollectShare(t.Context())
 	if err != nil || published {
@@ -123,8 +184,8 @@ func TestOneShareStaysLocked(t *testing.T) {
 
 // AT-07: the same index delivered twice is counted once.
 func TestSameIndexTwiceCountedOnce(t *testing.T) {
-	manifest, bundle, payloads := ceremonyFixture(t)
-	h, out := newHelper(t, manifest, bundle, fakeCDH(t, payloads[0], payloads[0], payloads[2]))
+	manifest, bundle, payloads, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, payloads[0], payloads[0], payloads[2]))
 
 	if published, err := h.CollectShare(t.Context()); err != nil || published {
 		t.Fatalf("first Share: CollectShare = %v, %v; want counted, locked", published, err)
@@ -166,10 +227,10 @@ func TestBadShareRejectedAndReported(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manifest, bundle, payloads := ceremonyFixture(t)
+			manifest, bundle, payloads, out := ceremonyFixture(t)
 			bad := payloads[0]
 			tt.mutate(&bad)
-			h, out := newHelper(t, manifest, bundle, fakeCDH(t, bad, payloads[1]))
+			h := newHelper(t, manifest, bundle, out, fakeCDH(t, bad, payloads[1]))
 
 			if published, err := h.CollectShare(t.Context()); err == nil || published {
 				t.Fatalf("CollectShare = %v, %v; want rejected", published, err)
@@ -189,10 +250,10 @@ func TestBadShareRejectedAndReported(t *testing.T) {
 }
 
 func TestRejectedIndexReportedOnce(t *testing.T) {
-	manifest, bundle, payloads := ceremonyFixture(t)
+	manifest, bundle, payloads, out := ceremonyFixture(t)
 	bad := payloads[1]
 	bad.Index = 7
-	h, _ := newHelper(t, manifest, bundle, fakeCDH(t, bad, bad))
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t, bad, bad))
 	for range 2 {
 		if _, err := h.CollectShare(t.Context()); err == nil {
 			t.Fatal("CollectShare accepted index 7")
@@ -221,8 +282,8 @@ func TestNewRejectsInvalidManifest(t *testing.T) {
 // AT-11: the helper fails in LOCKED when the mounted Ceremony Manifest is not
 // the one --manifest-sha256 pins, or when the host dropped the flag.
 func TestNewRejectsManifestDigestMismatch(t *testing.T) {
-	manifest, bundle, _ := ceremonyFixture(t)
-	other, _, _ := ceremonyFixture(t)
+	manifest, bundle, _, _ := ceremonyFixture(t)
+	other, _, _, _ := ceremonyFixture(t)
 	tests := []struct {
 		name   string
 		pinned string
@@ -242,8 +303,8 @@ func TestNewRejectsManifestDigestMismatch(t *testing.T) {
 }
 
 func TestCDHErrorIsReturned(t *testing.T) {
-	manifest, bundle, _ := ceremonyFixture(t)
-	h, _ := newHelper(t, manifest, bundle, fakeCDH(t))
+	manifest, bundle, _, out := ceremonyFixture(t)
+	h := newHelper(t, manifest, bundle, out, fakeCDH(t))
 	if _, err := h.CollectShare(t.Context()); err == nil {
 		t.Fatal("CollectShare succeeded when the CDH returned 404")
 	}

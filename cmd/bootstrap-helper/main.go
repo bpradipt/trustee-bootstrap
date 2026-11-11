@@ -13,14 +13,15 @@ import (
 	"strconv"
 
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
 )
 
 // cdhURL is the sandbox CDH's get-resource API.
 const cdhURL = "http://127.0.0.1:8006"
 
-// maxFileSize caps the Ceremony Manifest and the Sealed Bundle (1 MiB): both
-// travel in a ConfigMap.
-const maxFileSize = 1048576
+// maxFileSize caps the Ceremony Manifest and the Sealed Bundle: both travel
+// in a ConfigMap.
+const maxFileSize = seal.MaxSize
 
 func main() {
 	os.Exit(run(os.Args[1:], net.Listen, http.DefaultClient))

@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 
 	"filippo.io/age"
 )
@@ -37,8 +40,15 @@ func Seal(dst io.Writer, dir, recipient string) error {
 	return nil
 }
 
+// MaxSize caps the Sealed Bundle and the file contents it unseals to
+// (1 MiB): the bundle travels in a ConfigMap. age doesn't compress, but a
+// sparse tar entry can unpack larger than its bytes in the bundle.
+const MaxSize = 1048576
+
 // Unseal decrypts bundle with id and extracts it into the new directory dst.
-// os.Root keeps every entry inside dst.
+// It refuses absolute paths, "..", any entry but a directory or a regular
+// file (so symlinks, hardlinks and device files), and file contents over
+// MaxSize in total. os.Root keeps every entry inside dst.
 func Unseal(bundle []byte, id age.Identity, dst string) error {
 	plain, err := age.Decrypt(bytes.NewReader(bundle), id)
 	if err != nil {
@@ -53,6 +63,7 @@ func Unseal(bundle []byte, id age.Identity, dst string) error {
 	}
 	defer root.Close()
 	tr := tar.NewReader(plain)
+	var size int64
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -61,6 +72,10 @@ func Unseal(bundle []byte, id age.Identity, dst string) error {
 		if err != nil {
 			return fmt.Errorf("read bundle: %w", err)
 		}
+		if hdr.Size > MaxSize-size {
+			return fmt.Errorf("%s: the bundle unseals to over %d bytes", hdr.Name, MaxSize)
+		}
+		size += hdr.Size
 		if err := extract(root, hdr, tr); err != nil {
 			return err
 		}
@@ -68,6 +83,9 @@ func Unseal(bundle []byte, id age.Identity, dst string) error {
 }
 
 func extract(root *os.Root, hdr *tar.Header, r io.Reader) error {
+	if !filepath.IsLocal(hdr.Name) || slices.Contains(strings.Split(hdr.Name, "/"), "..") {
+		return fmt.Errorf("%s: path is absolute or holds ..", hdr.Name)
+	}
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		if err := root.MkdirAll(hdr.Name, 0o700); err != nil {
