@@ -53,7 +53,7 @@ func TestApproveChecksShareBeforeAnythingStarts(t *testing.T) {
 func TestApproveServesSharePayload(t *testing.T) {
 	f := keyCeremonyAndSeal(t)
 	var cvm memnet.Network
-	startTrusteeCVM(t, f, &cvm)
+	startTrusteeCVM(t, f, &cvm, io.Discard)
 	ws := &workstation{t: t, cvm: &cvm}
 
 	_, err := ws.run("approve", "--endpoint", "http://"+helperAddr, "--policy", buildPolicy(t, f, "bob"),
@@ -81,7 +81,7 @@ func TestApproveStopsTheOperatorVerifierOnSignal(t *testing.T) {
 	policyDir := buildPolicy(t, f, "alice")
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
 		var cvm memnet.Network
-		startTrusteeCVM(t, f, &cvm)
+		startTrusteeCVM(t, f, &cvm, io.Discard)
 		stopped := false
 		start := func(ctx context.Context, _ string, _ verifier.Options) (string, func(), error) {
 			if err := syscall.Kill(os.Getpid(), sig); err != nil {

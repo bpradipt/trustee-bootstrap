@@ -14,8 +14,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/internal/memnet"
 	"github.com/confidential-devhub/trustee-bootstrap/internal/trusteetest"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
@@ -32,10 +34,11 @@ const (
 	kbsSharePath = "/kbs/v0/resource/trustee-bootstrap/share/current"
 )
 
-// startTrusteeCVM runs the Bootstrap Helper on cvm and returns its --out. Its
-// fake CDH answers each get-resource call with a plain HTTP GET through the
-// guest-loopback proxy, where the real CDH would run RCAR.
-func startTrusteeCVM(t *testing.T, f unlockFixture, cvm *memnet.Network) string {
+// startTrusteeCVM runs the Bootstrap Helper on cvm, with its audit records
+// going to auditLog, and returns its --out. Its fake CDH answers each
+// get-resource call with a plain HTTP GET through the guest-loopback proxy,
+// where the real CDH would run RCAR.
+func startTrusteeCVM(t *testing.T, f unlockFixture, cvm *memnet.Network, auditLog io.Writer) string {
 	t.Helper()
 	kbs := &http.Client{Transport: &http.Transport{DialContext: cvm.DialContext, DisableKeepAlives: true}}
 	cdh := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +59,7 @@ func startTrusteeCVM(t *testing.T, f unlockFixture, cvm *memnet.Network) string 
 		}
 	})
 	out := f.out
-	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}})
+	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, helper.CDH{URL: "http://127.0.0.1:8006", Client: &http.Client{Transport: serveInProcess{cdh}}}, audit.New(auditLog))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +188,7 @@ func buildPolicy(t *testing.T, f unlockFixture, holder string) string {
 func TestTwoOperatorsUnlockThroughRelay(t *testing.T) {
 	f := keyCeremonyAndSeal(t)
 	var cvm memnet.Network
-	out := startTrusteeCVM(t, f, &cvm)
+	out := startTrusteeCVM(t, f, &cvm, io.Discard)
 	ws := &workstation{t: t, cvm: &cvm}
 	endpoint := "http://" + helperAddr
 
@@ -215,14 +218,92 @@ func TestTwoOperatorsUnlockThroughRelay(t *testing.T) {
 	assertNoShareBytes(t, ws.output, f.payloads)
 }
 
+// assertNoShareBytes fails if any Share appears in output raw, in hex, or in
+// base64 or base64url with or without padding. The unpadded forms are
+// prefixes of the padded ones, so they cover both.
 func assertNoShareBytes(t *testing.T, output []string, payloads []ceremony.SharePayload) {
 	t.Helper()
 	all := strings.Join(output, "\n")
 	for _, p := range payloads {
-		if strings.Contains(all, string(p.Share)) || strings.Contains(all, base64.StdEncoding.EncodeToString(p.Share)) {
-			t.Errorf("the CLI printed index %d's Share", p.Index)
+		for _, form := range []string{
+			string(p.Share),
+			hex.EncodeToString(p.Share),
+			base64.RawStdEncoding.EncodeToString(p.Share),
+			base64.RawURLEncoding.EncodeToString(p.Share),
+		} {
+			if strings.Contains(all, form) {
+				t.Errorf("index %d's Share is in the output", p.Index)
+			}
 		}
 	}
+}
+
+// syncBuffer is a bytes.Buffer that the helper's goroutines may write while
+// the test reads it.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// A whole Unlock Ceremony, with one Share rejected, leaves audit records on
+// both sides, and no Share in them.
+func TestAuditRecordsCarryNoShare(t *testing.T) {
+	f := keyCeremonyAndSeal(t)
+	var cvm memnet.Network
+	var helperAudit syncBuffer
+	startTrusteeCVM(t, f, &cvm, &helperAudit)
+	ws := &workstation{t: t, cvm: &cvm}
+	endpoint := "http://" + helperAddr
+
+	// bob's Operator Policy names another bundle: his Share is released,
+	// and the helper rejects it.
+	other := f
+	other.payloads = slices.Clone(f.payloads)
+	other.payloads[0].BundleSHA256 = strings.Repeat("0", 64)
+	if _, err := ws.approve(endpoint, other, "bob"); err == nil {
+		t.Fatal("bob's approve for another bundle succeeded")
+	}
+	for _, holder := range []string{"alice", "carol"} {
+		if _, err := ws.approve(endpoint, f, holder); err != nil {
+			t.Fatalf("%s's approve: %v", holder, err)
+		}
+	}
+	ws.assertStatus(endpoint, helper.StatePublished, []int{1, 3})
+
+	helperLog, cliLog := helperAudit.String(), strings.Join(ws.output, "")
+	for _, want := range []string{
+		`"msg":"state_changed","boot_id":`, `"state":"COLLECTING"`, `"state":"PUBLISHED"`,
+		`"msg":"relay_opened"`, `"msg":"relay_closed"`, `"reason":"accepted"`,
+		`"msg":"share_rejected","boot_id":`, `"index":2,"reason":"bundle_sha256`,
+		`"msg":"share_accepted","boot_id":`, `"index":3,"accepted":2`,
+	} {
+		if !strings.Contains(helperLog, want) {
+			t.Errorf("helper audit lacks %s:\n%s", want, helperLog)
+		}
+	}
+	for _, want := range []string{
+		`"msg":"verifier_started","index":2`, `"msg":"verifier_stopped"`, `"msg":"relay_opened"`,
+		`"msg":"relay_closed","index":1`, `"code":1000}`, `"code":1008,"error":"failed to get reader`,
+		`"msg":"approve_result","index":2,"key_id":"` + f.payloads[1].KeyID, `"accepted":false,"error":"relay ended`,
+		`"msg":"approve_result","index":3`, `"accepted":true}`,
+	} {
+		if !strings.Contains(cliLog, want) {
+			t.Errorf("CLI audit lacks %s:\n%s", want, cliLog)
+		}
+	}
+	assertNoShareBytes(t, []string{helperLog, cliLog}, f.payloads)
 }
 
 // When no Share reaches the helper, approve reports a sanitized error, not
@@ -230,7 +311,7 @@ func assertNoShareBytes(t *testing.T, output []string, payloads []ceremony.Share
 func TestApproveReportsShareNotAccepted(t *testing.T) {
 	f := keyCeremonyAndSeal(t)
 	var cvm memnet.Network
-	startTrusteeCVM(t, f, &cvm)
+	startTrusteeCVM(t, f, &cvm, io.Discard)
 	ws := &workstation{t: t, cvm: &cvm, deny: true}
 	endpoint := "http://" + helperAddr
 

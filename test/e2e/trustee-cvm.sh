@@ -237,9 +237,11 @@ policy_build() {
 		--share-file "$work/ceremony/$1.share" --out-dir "$work/policy-$1" >/dev/null
 }
 
-# approve <holder>
+# approve <holder>: prints "accepted", or the error output on failure. The
+# audit records stay in $work/approve-<holder>.log.
 approve() {
-	tb approve --endpoint "$endpoint" --policy "$work/policy-$1" --share-file "$work/ceremony/$1.share" 2>&1
+	tb approve --endpoint "$endpoint" --policy "$work/policy-$1" --share-file "$work/ceremony/$1.share" \
+		2>"$work/approve-$1.log" || { cat "$work/approve-$1.log"; return 1; }
 }
 
 # status_is <state accepted>, e.g. status_is "COLLECTING [1]"

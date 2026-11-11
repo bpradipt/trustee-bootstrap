@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/internal/trusteetest"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/cli"
@@ -161,7 +163,7 @@ func assertNoIdentityOnDisk(t *testing.T, dir string) {
 func newHelper(t *testing.T, f unlockFixture, payloads ...ceremony.SharePayload) (*helper.Helper, string) {
 	t.Helper()
 	out := f.out
-	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, fakeCDH(t, payloads...))
+	h, err := helper.New(f.manifest, sha256Hex(f.manifest), f.bundle, out, fakeCDH(t, payloads...), audit.New(io.Discard))
 	if err != nil {
 		t.Fatal(err)
 	}

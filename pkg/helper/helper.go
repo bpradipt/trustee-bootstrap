@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/seal"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
@@ -92,6 +94,7 @@ type Helper struct {
 	out          string
 	cdh          CDH
 	bootID       string
+	audit        *slog.Logger  // audit records, each with boot_id and key_id
 	relayMu      sync.Mutex    // held by the one open relay
 	done         chan struct{} // closed on leaving COLLECTING
 
@@ -106,8 +109,9 @@ type Helper struct {
 // Sealed Bundle bytes, read once from the untrusted mounts. The manifest must
 // hash to manifestSHA256, the hex digest that the Kata Agent policy pins in
 // --manifest-sha256. The Helper uses only these bytes from here on. It asks
-// cdh for Share payloads and publishes the unsealed tree into out.
-func New(manifest []byte, manifestSHA256 string, bundle []byte, out string, cdh CDH) (*Helper, error) {
+// cdh for Share payloads, publishes the unsealed tree into out and writes
+// its audit records to log.
+func New(manifest []byte, manifestSHA256 string, bundle []byte, out string, cdh CDH, log *slog.Logger) (*Helper, error) {
 	if got := sha256Hex(manifest); got != manifestSHA256 {
 		return nil, fmt.Errorf("ceremony manifest sha256 %s does not match --manifest-sha256 %q", got, manifestSHA256)
 	}
@@ -128,6 +132,8 @@ func New(manifest []byte, manifestSHA256 string, bundle []byte, out string, cdh 
 	if err := h.manifest.Validate(); err != nil {
 		return nil, fmt.Errorf("ceremony manifest: %w", err)
 	}
+	h.audit = log.With("boot_id", h.bootID, "key_id", h.manifest.KeyID)
+	h.audit.Info(audit.StateChanged, "state", h.state, "threshold", h.manifest.Threshold, "bundle_sha256", h.bundleSHA256)
 	return h, nil
 }
 
@@ -163,10 +169,12 @@ func (h *Helper) CollectShare(ctx context.Context) (bool, error) {
 		if !slices.Contains(h.rejected, p.Index) {
 			h.rejected = append(h.rejected, p.Index)
 		}
+		h.audit.Info(audit.ShareRejected, "index", p.Index, "reason", err.Error())
 		return false, fmt.Errorf("reject Share index %d: %w", p.Index, err)
 	}
 	h.shares = append(h.shares, p.Share)
 	h.accepted = append(h.accepted, p.Index)
+	h.audit.Info(audit.ShareAccepted, "index", p.Index, "accepted", len(h.accepted))
 	if len(h.shares) < h.manifest.Threshold {
 		return false, nil
 	}
@@ -175,6 +183,7 @@ func (h *Helper) CollectShare(ctx context.Context) (bool, error) {
 	if err != nil {
 		h.state = StateFailed
 	}
+	h.audit.Info(audit.StateChanged, "state", h.state, audit.Error(err))
 	close(h.done)
 	return err == nil, err
 }
@@ -213,6 +222,7 @@ func (h *Helper) expire() {
 	}
 	h.shares = nil
 	h.state = StateFailed
+	h.audit.Info(audit.StateChanged, "state", h.state, "error", "deadline passed")
 	close(h.done)
 }
 

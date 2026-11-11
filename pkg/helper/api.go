@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/confidential-devhub/trustee-bootstrap/internal/audit"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/relay"
 )
 
@@ -54,10 +54,10 @@ func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy 
 	if err != nil {
 		return // Accept has answered the request
 	}
+	h.audit.Info(audit.RelayOpened, "remote", r.RemoteAddr)
 	proxy, err := listenProxy()
 	if err != nil {
-		log.Printf("relay: open guest proxy: %v", err)
-		ws.Close(websocket.StatusInternalError, "guest proxy unavailable")
+		h.closeRelay(ws, websocket.StatusInternalError, "guest proxy unavailable", err)
 		return
 	}
 	ctx, cancel := context.WithCancel(r.Context())
@@ -69,12 +69,18 @@ func (h *Helper) serveRelay(w http.ResponseWriter, r *http.Request, listenProxy 
 		close(relayed)
 	}()
 	code, reason := websocket.StatusNormalClosure, reasonAccepted
-	if _, err := h.CollectShare(ctx); err != nil {
-		log.Printf("relay: %v", err)
+	_, err = h.CollectShare(ctx)
+	if err != nil {
 		code, reason = websocket.StatusPolicyViolation, reasonNotAccepted
 	}
-	ws.Close(code, reason)
+	h.closeRelay(ws, code, reason, err)
 	<-relayed
+}
+
+// closeRelay records the relay's outcome, then tells the Security Operator.
+func (h *Helper) closeRelay(ws *websocket.Conn, code websocket.StatusCode, reason string, err error) {
+	h.audit.Info(audit.RelayClosed, "code", int(code), "reason", reason, audit.Error(err))
+	ws.Close(code, reason)
 }
 
 // Serve serves the Helper API on l until the unlock ends, then stops. It
