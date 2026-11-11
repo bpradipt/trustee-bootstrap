@@ -5,6 +5,9 @@
 #   ci.sh go          go vet and go test
 #   ci.sh lint BASE   the Go gate's checks, with its pinned tools and
 #                     limits, on the changes since BASE
+#   ci.sh release DIR [VERSION]
+#                     the release binaries, a CycloneDX SBOM for each and
+#                     SHA256SUMS, written into DIR
 #   ci.sh e2e         the claim-profile fixtures through the pinned KBS
 #                     image (test/e2e/profiles), then the swtpm end-to-end
 #                     tests: kind-kata-swtpm.sh up, share-release.sh and
@@ -25,6 +28,9 @@ GREMLINS_URL=https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gr
 GREMLINS_SHA256=b02a42e47935f891c9a411d68c07e211c7082609e79c2435b67c85ee9658c538
 JSCPD_URL=https://github.com/kucherenko/jscpd/releases/download/v5.4.2/jscpd-linux-x64-musl.tar.gz
 JSCPD_SHA256=5f18a6b70b4210782fc3c401c780ba994a2777249cd44d97d6fa460f6fff4570
+# The SBOM tool. go run fetches this exact version, and the Go checksum
+# database verifies its source and every dependency.
+CYCLONEDX_GOMOD=github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
 tools=${LINT_TOOLS:-${XDG_CACHE_HOME:-$HOME/.cache}/trustee-bootstrap-lint}
 
 # tool <name> <url> <sha256>: unpack a pinned release into $tools/<name> once.
@@ -72,11 +78,28 @@ lint() {
 		--ignore '**/*_test.go,**/tests/**,**/testdata/**,**/target/**,**/vendor/**' --reporters console .
 }
 
+# release <dir> [version]: build each binary as the helper image does, then
+# describe it with an SBOM read from the module data the binary carries.
+release() {
+	local out=$1 version=${2:-$(git describe --tags --always --dirty 2>/dev/null || echo devel)} bin
+	mkdir -p "$out"
+	for bin in trustee-bootstrap bootstrap-helper; do
+		CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o "$out/$bin" "./cmd/$bin"
+		go run "$CYCLONEDX_GOMOD" bin -json -version "$version" -output "$out/$bin.cdx.json" "$out/$bin"
+	done
+	(cd "$out" && sha256sum trustee-bootstrap bootstrap-helper trustee-bootstrap.cdx.json bootstrap-helper.cdx.json >SHA256SUMS)
+}
+
 case "${1:-}" in
 go)
+	# go.mod and go.sum pin every dependency: fail if either is stale, or
+	# if a downloaded module differs from its go.sum hash.
+	go mod tidy -diff
+	go mod verify
 	go vet ./...
 	go test ./...
 	;;
+release) release "${2:?usage: $0 release DIR [VERSION]}" "${3:-}" ;;
 lint) lint "${2:?usage: $0 lint BASE}" ;;
 e2e)
 	# trustee-cvm.sh builds the helper image with podman.
@@ -89,7 +112,7 @@ e2e)
 	"$e2e/trustee-cvm.sh"
 	;;
 *)
-	echo "usage: $0 go | lint BASE | e2e" >&2
+	echo "usage: $0 go | lint BASE | release DIR [VERSION] | e2e" >&2
 	exit 2
 	;;
 esac
