@@ -1,9 +1,10 @@
 # CI
 
-`.github/workflows/ci.yml` runs on every pull request and on each push to `main`. It has two jobs. Each job calls `test/e2e/ci.sh`, so you can run the same steps on your machine.
+`.github/workflows/ci.yml` runs on every pull request and on each push to `main`. It has three jobs. Each job calls `test/e2e/ci.sh`, so you can run the same steps on your machine.
 
 | Job | Runs | Locally |
 |---|---|---|
+| `changes` | decides whether `e2e` runs: a pull request that changes only `docs/`, `.scratch/` or `*.md` files skips it, and a push to `main` always runs it | `test/e2e/ci.sh needs-e2e <base>` |
 | `go` | the module pin checks, `go vet`, `go test`, the Go gate's checks on the changes since the base commit, and the release build with its SBOMs | `test/e2e/ci.sh go`, `test/e2e/ci.sh lint <base>`, then `test/e2e/ci.sh release DIR` |
 | `e2e` | the claim-profile fixtures through the pinned KBS image (AT-28), then `kind-kata-swtpm.sh up`, `share-release.sh`, `trustee-cvm.sh` and `down` | `test/e2e/ci.sh e2e` |
 
@@ -32,7 +33,7 @@ The SBOM tool is cyclonedx-gomod v1.12.0, run with `go run module@version`. The 
 
 ## Required checks
 
-A workflow file can't block a merge. A repository admin must turn on branch protection for `main` (Settings, Branches) and add `go` and `e2e` as required status checks. Without that setting, a red run is only a warning.
+A workflow file can't block a merge. A repository admin must turn on branch protection for `main` (Settings, Branches) and add `go` and `e2e` as required status checks. Without that setting, a red run is only a warning. GitHub counts a skipped `e2e` as passing, so a documentation-only pull request stays mergeable.
 
 ## Runner and cache
 

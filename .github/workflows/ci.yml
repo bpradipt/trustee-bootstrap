@@ -1,6 +1,6 @@
 # Every pull request runs the Go tests, the Go gate's checks and the swtpm
-# end-to-end tests. Each job calls test/e2e/ci.sh, so a developer can run the
-# same steps.
+# end-to-end tests; a documentation-only PR skips the end-to-end tests. Each
+# job calls test/e2e/ci.sh, so a developer can run the same steps.
 # docs/ci.md lists the checks that branch protection must require.
 name: ci
 
@@ -44,7 +44,33 @@ jobs:
           path: ${{ runner.temp }}/release
           if-no-files-found: error
 
+  # A pull request that changes only documentation skips e2e. GitHub counts
+  # a skipped job as passing, so such a PR stays mergeable. Pushes to main
+  # always run it.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      e2e: ${{ steps.diff.outputs.e2e }}
+    steps:
+      # A pull request checks out its merge commit; HEAD^1 is the base tip.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [[ $EVENT == pull_request ]]; then
+            test/e2e/ci.sh needs-e2e HEAD^1 >>"$GITHUB_OUTPUT"
+          else
+            echo e2e=true >>"$GITHUB_OUTPUT"
+          fi
+
   e2e:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
