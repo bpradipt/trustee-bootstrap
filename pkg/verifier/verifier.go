@@ -43,6 +43,10 @@ const (
 	containerPort = "8080"
 )
 
+// asPolicyDir is where KBS's built-in AS stores its policies (LocalFs
+// namespace attestation_service_policy).
+const asPolicyDir = "storage/attestation_service_policy"
+
 // Options is one Operator Verifier run.
 type Options struct {
 	// KBSBinary runs a natively installed kbs instead of Image.
@@ -73,13 +77,15 @@ func DefaultEngine() string {
 // picks one) and returns the address it serves on once KBS answers. stop
 // ends KBS and deletes its run directory.
 func (r Runtime) Start(ctx context.Context, address string, opts Options) (addr string, stop func(), err error) {
+	parent := runtimeDir()
+	if err := checkTmpfs(parent); err != nil {
+		return "", nil, err
+	}
 	addr, err = r.reservePort(address)
 	if err != nil {
 		return "", nil, err
 	}
-	// ponytail: does not check that the run directory is on tmpfs, or clean
-	// up after files a rootful engine wrote as root (ticket 13).
-	dir, err := os.MkdirTemp(runtimeDir(), "trustee-bootstrap-verifier-")
+	dir, err := os.MkdirTemp(parent, "trustee-bootstrap-verifier-")
 	if err != nil {
 		return "", nil, fmt.Errorf("create run directory: %w", err)
 	}
@@ -91,12 +97,20 @@ func (r Runtime) Start(ctx context.Context, address string, opts Options) (addr 
 	return addr, func() { end(); os.RemoveAll(dir) }, nil
 }
 
+// reservePort picks the port, on 127.0.0.1 only (AT-02).
 func (r Runtime) reservePort(address string) (string, error) {
 	l, err := r.Listen("tcp", address)
 	if err != nil {
 		return "", fmt.Errorf("pick a port: %w", err)
 	}
-	return l.Addr().String(), l.Close()
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		return "", fmt.Errorf("pick a port: %w", err)
+	}
+	if host, _, _ := net.SplitHostPort(addr); host != "127.0.0.1" {
+		return "", fmt.Errorf("the Operator Verifier listens on 127.0.0.1 only, not %s", addr)
+	}
+	return addr, nil
 }
 
 // runtimeDir is the user's tmpfs runtime directory.
@@ -105,6 +119,22 @@ func runtimeDir() string {
 		return d
 	}
 	return "/dev/shm"
+}
+
+// tmpfsMagic is Linux's TMPFS_MAGIC (statfs(2)).
+const tmpfsMagic = 0x01021994
+
+// checkTmpfs refuses a run directory parent that is not tmpfs: the run
+// directory holds the Share payload, which must never reach a disk.
+func checkTmpfs(dir string) error {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return fmt.Errorf("check run directory: %w", err)
+	}
+	if st.Type != tmpfsMagic {
+		return fmt.Errorf("%s is not on tmpfs; set XDG_RUNTIME_DIR to a tmpfs directory", dir)
+	}
+	return nil
 }
 
 // launch writes the run directory, starts KBS and waits until it answers.
@@ -130,8 +160,8 @@ func (r Runtime) launch(ctx context.Context, dir, addr string, opts Options) (fu
 	cmd.WaitDelay = time.Minute
 	// KBS output stays in memory and is shown only if KBS fails to start,
 	// before it has seen any evidence.
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	out := &tail{n: maxKBSOutput}
+	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Start(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start KBS: %w", err)
@@ -141,9 +171,24 @@ func (r Runtime) launch(ctx context.Context, dir, addr string, opts Options) (fu
 	end := func() { cancel(); <-exited }
 	if err := r.waitReady(ctx, addr, exited); err != nil {
 		end()
-		return nil, fmt.Errorf("start KBS: %w\n%s", err, strings.TrimSpace(out.String()))
+		return nil, fmt.Errorf("start KBS: %w\n%s", err, strings.TrimSpace(string(out.b)))
 	}
 	return end, nil
+}
+
+// maxKBSOutput bounds the KBS output kept in memory (64 KiB).
+const maxKBSOutput = 65536
+
+// tail keeps the last n bytes written to it.
+type tail struct {
+	b []byte
+	n int
+}
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.b = append(t.b, p...)
+	t.b = t.b[max(len(t.b)-t.n, 0):]
+	return len(p), nil
 }
 
 // waitReady polls KBS until it answers any HTTP request.
@@ -184,6 +229,12 @@ func writeRunDir(dir string, cfg Config, opts Options) error {
 	files, err := runFiles(cfg, opts)
 	if err != nil {
 		return err
+	}
+	// KBS writes the AS's default policies here. Creating the directory
+	// first keeps it the operator's, so stop can delete the files a rootful
+	// engine writes into it as root.
+	if err := root.MkdirAll(asPolicyDir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", asPolicyDir, err)
 	}
 	for name, data := range files {
 		if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {

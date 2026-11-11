@@ -7,7 +7,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"slices"
+	"syscall"
 
 	"github.com/coder/websocket"
 	"github.com/spf13/cobra"
@@ -56,7 +59,11 @@ func newApproveCmd(e env) *cobra.Command {
 				return err
 			}
 			opts.KBSBinary = kbsBinary
-			if err := e.approve(cmd.Context(), endpoint, share, opts, limits); err != nil {
+			// SIGINT and SIGTERM cancel the context, so the Operator
+			// Verifier stops and its run directory goes (AT-18).
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			if err := e.approve(ctx, endpoint, share, opts, limits); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "accepted")

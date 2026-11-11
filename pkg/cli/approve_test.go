@@ -1,14 +1,20 @@
 package cli_test
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/memnet"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/cli"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 // approve checks the Share against the Operator Policy before it contacts
@@ -65,6 +71,34 @@ func TestApproveServesSharePayload(t *testing.T) {
 	want := f.payloads[1]
 	if got.Index != want.Index || got.KeyID != want.KeyID || string(got.Share) != string(want.Share) || got.BundleSHA256 != want.BundleSHA256 {
 		t.Errorf("Share payload = index %d bundle %s, want bob's for %s", got.Index, got.BundleSHA256, want.BundleSHA256)
+	}
+}
+
+// AT-18: SIGINT or SIGTERM ends approve through its normal cleanup, so the
+// Operator Verifier stops. Without a handler the signal would kill the test.
+func TestApproveStopsTheOperatorVerifierOnSignal(t *testing.T) {
+	f := keyCeremonyAndSeal(t)
+	policyDir := buildPolicy(t, f, "alice")
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		var cvm memnet.Network
+		startTrusteeCVM(t, f, &cvm)
+		stopped := false
+		start := func(ctx context.Context, _ string, _ verifier.Options) (string, func(), error) {
+			if err := syscall.Kill(os.Getpid(), sig); err != nil {
+				t.Fatal(err)
+			}
+			<-ctx.Done()
+			return "127.0.0.1:1", func() { stopped = true }, nil
+		}
+		client := &http.Client{Transport: &http.Transport{DialContext: cvm.DialContext}}
+		cmd := cli.NewTrusteeBootstrapCmdWith(client, (&memnet.Network{}).DialContext, start)
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"approve", "--endpoint", "http://" + helperAddr, "--policy", policyDir,
+			"--share-file", filepath.Join(f.ceremonyDir, "alice.share")})
+		if err := cmd.Execute(); err == nil || !stopped {
+			t.Errorf("%v: approve = %v, Operator Verifier stopped: %v; want an error and a stop", sig, err, stopped)
+		}
 	}
 }
 
