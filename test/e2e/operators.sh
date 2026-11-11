@@ -3,6 +3,7 @@
 # with bin/trustee-bootstrap, ceremony/, init.toml and rv.json),
 # $bundle_sha256 and $endpoint, and define die.
 # shellcheck shell=bash
+# shellcheck disable=SC2154 # the sourcing script sets work, bundle_sha256 and endpoint
 
 tb() { "$work/bin/trustee-bootstrap" "$@"; }
 
