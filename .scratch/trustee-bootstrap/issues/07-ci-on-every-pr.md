@@ -8,7 +8,7 @@
 
 **Spec:** §9 Phase 2, §11.
 
-- [ ] A PR runs the Go gate, the Go tests and the swtpm end-to-end test. *(The workflow runs the Go tests, the Go gate's tools with its limits, and the e2e test. It is lint-clean, and its steps pass on the scratch VM. No GitHub run yet: the repo has no remote. See Comments.)*
+- [x] A PR runs the Go gate, the Go tests and the swtpm end-to-end test. *(The baseline PR's [run 43072432012](https://github.com/bpradipt/trustee-bootstrap/actions/runs/43072432012) passed both jobs: `go` in 8.5 min, `e2e` in 25 min with a cold build. The first run, 43067508239, failed on two real bugs, fixed in "Build with Go 1.26.4 in CI" and "Keep rootful podman out of the user's crun directory".)*
 - [ ] A deliberately broken PR fails CI. *(Locally, each `ci.sh` step exits 1 on a broken tree. A real broken PR is still owed. See Comments.)*
 
 ## Comments
@@ -58,6 +58,5 @@ Repeat (scripts in the session scratchpad, `t07/vm-*.sh`): `vmsync <worktree> t0
 
 ### Not done
 
-- **No GitHub run.** The repo has no remote, so no real pull request has run this workflow. These steps stay open until someone pushes the repo and opens two PRs, one clean and one deliberately broken: `/dev/kvm` and rootful podman next to Docker on a hosted runner, the cold 20-minute build within the 90-minute timeout, and the free disk.
+- **Deliberately broken PR.** The clean PR passed on GitHub (run 43072432012): `/dev/kvm` and rootful podman work on the hosted runner, and the cold build fits the timeout. A PR from the `ci-red-check` branch, which adds one failing test, still has to show red.
 - **Branch protection** is a repository setting. `docs/ci.md` says what to require.
-- Ticket 04's "CI runner" box stays open for the same reason. The VM is a KVM host, not a CI runner.
