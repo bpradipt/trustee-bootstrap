@@ -82,12 +82,12 @@ func TestInnerBytesCrossUnchanged(t *testing.T) {
 		echoed <- err
 	}()
 	guestDone := make(chan error, 1)
-	go func() { guestDone <- relay.Guest(t.Context(), guestWS, proxy) }()
+	go func() { guestDone <- relay.Guest(t.Context(), guestWS, proxy, relay.DefaultLimits()) }()
 	operatorDone := make(chan error, 1)
 	go func() {
 		operatorDone <- relay.Operator(t.Context(), operatorWS, func(ctx context.Context) (net.Conn, error) {
 			return workstation.DialContext(ctx, "tcp", verifierAddr)
-		})
+		}, relay.DefaultLimits())
 	}()
 
 	c, err := cvm.DialContext(t.Context(), "tcp", proxyAddr)
@@ -140,7 +140,7 @@ func readFrame(t *testing.T, ws *websocket.Conn) []byte {
 func TestGuestFramesEachConnection(t *testing.T) {
 	guestWS, operatorWS := wsPair(t)
 	var cvm memnet.Network
-	go relay.Guest(t.Context(), guestWS, listen(t, &cvm, proxyAddr))
+	go relay.Guest(t.Context(), guestWS, listen(t, &cvm, proxyAddr), relay.DefaultLimits())
 
 	for id := byte(1); id <= 2; id++ {
 		c, err := cvm.DialContext(t.Context(), "tcp", proxyAddr)
@@ -181,7 +181,7 @@ func TestGuestEndsRelayOnBadFrame(t *testing.T) {
 			var cvm memnet.Network
 			proxy := listen(t, &cvm, proxyAddr)
 			done := make(chan error, 1)
-			go func() { done <- relay.Guest(t.Context(), guestWS, proxy) }()
+			go func() { done <- relay.Guest(t.Context(), guestWS, proxy, relay.DefaultLimits()) }()
 			operatorWS.CloseRead(t.Context()) // takes the guest's close frame
 			go operatorWS.Write(t.Context(), tt.typ, tt.msg)
 			if err := <-done; err == nil {

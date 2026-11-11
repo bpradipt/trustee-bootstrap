@@ -22,6 +22,7 @@ import (
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/cli"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/policy"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/relay"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
@@ -63,7 +64,7 @@ func startTrusteeCVM(t *testing.T, f unlockFixture, cvm *memnet.Network) string 
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: h.Handler(func() (net.Listener, error) { return cvm.Listen("tcp", proxyAddr) })}
+	srv := &http.Server{Handler: h.Handler(func() (net.Listener, error) { return cvm.Listen("tcp", proxyAddr) }, relay.DefaultLimits())}
 	go srv.Serve(l)
 	t.Cleanup(func() { srv.Close() })
 	return out

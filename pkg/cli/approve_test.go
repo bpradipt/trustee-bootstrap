@@ -67,3 +67,21 @@ func TestApproveServesSharePayload(t *testing.T) {
 		t.Errorf("Share payload = index %d bundle %s, want bob's for %s", got.Index, got.BundleSHA256, want.BundleSHA256)
 	}
 }
+
+// The relay limits can be lowered, never disabled: approve refuses zero or
+// negative limits before it starts anything.
+func TestApproveRefusesDisabledRelayLimits(t *testing.T) {
+	f := keyCeremonyAndSeal(t)
+	policyDir := buildPolicy(t, f, "alice")
+	for _, flag := range []string{"--relay-idle-timeout=0", "--relay-total-timeout=-1s", "--relay-idle-timeout=31s"} {
+		ws := &workstation{t: t, cvm: &memnet.Network{}}
+		_, err := ws.run("approve", "--endpoint", "http://"+helperAddr, "--policy", policyDir,
+			"--share-file", filepath.Join(f.ceremonyDir, "alice.share"), flag)
+		if err == nil || !strings.Contains(err.Error(), "timeout") {
+			t.Errorf("%s: approve = %v, want a relay limit error", flag, err)
+		}
+		if len(ws.started) != 0 {
+			t.Errorf("%s: approve started the Operator Verifier", flag)
+		}
+	}
+}

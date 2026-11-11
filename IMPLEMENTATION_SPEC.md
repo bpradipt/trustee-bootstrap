@@ -119,14 +119,16 @@ Operators run one after another. Each CDH call does a fresh RCAR with a fresh TE
 
 - Binary WebSocket messages with a 9-byte header: `type` (u8: `OPEN=1`, `DATA=2`, `CLOSE=3`), `conn_id` (u64 big-endian), then the payload.
 - `DATA` frames carry at most 64 KiB.
-- The guest side sends `OPEN` for each loopback connection that the CDH/AA make. `conn_id` must strictly increase. Only one inner connection is open at a time, and at most 8 per relay.
+- The guest side sends `OPEN` for each loopback connection that the CDH/AA make. `conn_id` must strictly increase, and a relay carries at most 8 inner connections.
+- Only one inner connection is open at a time. A newer `OPEN` closes the older connection, and the side that closes it sends `CLOSE`. The CDH opens its next connection about 0.2 ms before it closes the previous one, so a relay that refused the overlap would fail each unlock. The older connection has finished its exchange by then. Under this rule a relay holder can keep at most one connection to the Operator Verifier open.
+- A frame that breaks these rules ends the relay. A denied attestation makes the CDH retry its whole RCAR about 4 times, two connections each, so the cap of 8 may cut off the last retry. The Operator Verifier would deny that retry too, so losing it costs nothing.
 - The CLI connects only to its own Operator Verifier port. It never connects to an address taken from a frame.
-- Limits: 30 s idle and 120 s total per relay. They can be configured lower but not disabled.
+- Limits: 30 s idle (no frame in either direction) and 120 s total per relay. Both sides enforce them and end the relay with close code `1008`. `--relay-idle-timeout` and `--relay-total-timeout`, on the Bootstrap Helper and on `approve`, can lower them. Both refuse a zero, negative or higher value at start, so nobody can disable the limits.
 - Buffers are bounded with backpressure. A disconnect cleans everything up. Inner bytes are never parsed or logged.
 
 ## 5. Bootstrap Helper
 
-Flags: `--manifest`, `--manifest-sha256`, `--bundle`, `--out`, `--listen`, `--proxy-port`, and an optional `--deadline`. All values are pinned by the Kata Agent policy. A missing or empty `--manifest-sha256` is fatal, because the policy lets the host drop args it can't change.
+Flags: `--manifest`, `--manifest-sha256`, `--bundle`, `--out`, `--listen`, `--proxy-port`, an optional `--deadline`, and the relay limits `--relay-idle-timeout` and `--relay-total-timeout` (§4). All values are pinned by the Kata Agent policy. A missing or empty `--manifest-sha256` is fatal, because the policy lets the host drop args it can't change.
 
 ```text
 LOCKED -> COLLECTING -> UNSEALING -> PUBLISHED -> exit 0
@@ -161,7 +163,7 @@ This is one Cobra tree in `pkg/cli`, `NewTrusteeBootstrapCmd()`. `cococtl` mount
 | `ceremony split --threshold K --holders a,b,c` | Ceremony Authority, air-gapped | Generates an age identity, splits it, writes the Share files and `ceremony.json`, and never writes the identity to disk |
 | `seal --manifest ceremony.json <dir>` | Infrastructure Operator, on the controlled sealing machine | Runs the sealed-config checks (§3), then tars and age-encrypts the directory and prints the bundle digest. Sealing with the stock `age` CLI skips the checks, though the Bootstrap Helper repeats them before publishing |
 | `policy build --init-data init.toml --reference-values rv.json --accept-tee tdx,snp --bundle-sha256 … --manifest ceremony.json --share-file my.share` | Security Operator | Computes the Init-Data digest itself, and writes the Operator Policy plus the generated KBS config, resource policy and RVPS values, using the claim profile of each accepted TEE type |
-| `approve --endpoint URL --policy DIR --share-file my.share [--kbs-binary PATH]` | Security Operator | Runs the §4 flow. Success means "Share accepted", not "Trustee running" |
+| `approve --endpoint URL --policy DIR --share-file my.share [--kbs-binary PATH] [--relay-idle-timeout D] [--relay-total-timeout D]` | Security Operator | Runs the §4 flow. Success means "Share accepted", not "Trustee running" |
 | `status --endpoint URL` | Anyone | Prints the Bootstrap Helper's status |
 
 - **Claim profiles.** Each TEE type reports Init-Data and debug state differently. Azure vTPM and the TPM attester put `sha256(0³² ‖ digest)` in PCR8. TDX may bind the digest through RTMR3 and leave MRCONFIGID zero. Azure SNP reports the debug policy as a string. So `policy build` holds one claim profile per TEE type, giving the claim paths and types, the digest transformation, the debug check and the required reference values. The generated resource policy denies when any claim the profile requires is missing. Phase 0 writes the profile table.

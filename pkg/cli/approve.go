@@ -39,6 +39,7 @@ func defaultEnv() env {
 
 func newApproveCmd(e env) *cobra.Command {
 	var endpoint, policyDir, shareFile, kbsBinary string
+	limits := relay.DefaultLimits()
 	cmd := &cobra.Command{
 		Use:   "approve --endpoint URL --policy DIR --share-file FILE",
 		Short: "Release your Share to the Trustee CVM through the Bootstrap Helper's relay",
@@ -47,12 +48,15 @@ func newApproveCmd(e env) *cobra.Command {
 			"\"accepted\" once the helper accepts the Share; that does not mean Trustee is running.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := limits.Check(); err != nil {
+				return err
+			}
 			share, opts, err := loadApproval(policyDir, shareFile)
 			if err != nil {
 				return err
 			}
 			opts.KBSBinary = kbsBinary
-			if err := e.approve(cmd.Context(), endpoint, share, opts); err != nil {
+			if err := e.approve(cmd.Context(), endpoint, share, opts, limits); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "accepted")
@@ -63,6 +67,8 @@ func newApproveCmd(e env) *cobra.Command {
 	cmd.Flags().StringVar(&policyDir, "policy", "", "your Operator Policy directory (policy build --out-dir)")
 	cmd.Flags().StringVar(&shareFile, "share-file", "", "your Share file")
 	cmd.Flags().StringVar(&kbsBinary, "kbs-binary", "", "run this natively installed kbs instead of the pinned KBS image")
+	cmd.Flags().DurationVar(&limits.Idle, "relay-idle-timeout", limits.Idle, "end the relay after this long with no traffic; may be lowered, not raised")
+	cmd.Flags().DurationVar(&limits.Total, "relay-total-timeout", limits.Total, "end the relay after this long; may be lowered, not raised")
 	requireFlags(cmd, "endpoint", "policy", "share-file")
 	return cmd
 }
@@ -113,8 +119,9 @@ func newStatusCmd(e env) *cobra.Command {
 	return cmd
 }
 
-// approve runs one Security Operator's flow (spec §4). It never prints the Share.
-func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareFile, opts verifier.Options) error {
+// approve runs one Security Operator's flow (spec §4) within limits. It never
+// prints the Share.
+func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareFile, opts verifier.Options, limits relay.Limits) error {
 	st, err := e.status(ctx, endpoint)
 	if err != nil {
 		return err
@@ -141,7 +148,7 @@ func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareF
 	defer ws.CloseNow()
 	err = relay.Operator(ctx, ws, func(ctx context.Context) (net.Conn, error) {
 		return e.dial(ctx, "tcp", addr)
-	})
+	}, limits)
 	if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
 		return fmt.Errorf("relay ended: %w", err)
 	}
