@@ -14,6 +14,11 @@
 #   AT-17   a workload that pins Trustee's certificate (kbs_cert) gets the
 #   AT-24   sealed resource; one with other Init-Data is refused, so Trustee
 #           runs the sealed policy and not its built-in default
+#   AT-21   from the node's network, the host presents a self-signed token
+#           naming its own TEE key, and gets nothing
+#   AT-22   it calls the admin API without the admin key to replace the
+#           resource policy, and is refused; AT-24 then shows the sealed
+#           policy still rules
 #   AT-26   the Trustee container restarts and serves again from the
 #           published tree, with no new ceremony
 #
@@ -190,6 +195,7 @@ trustee_tree() {
 ceremony_and_seal() {
 	mkdir -p "$work/bin" "$work/ceremony"
 	CGO_ENABLED=0 "$GO" build -C "$repo" -o "$work/bin/" ./cmd/trustee-bootstrap
+	CGO_ENABLED=0 "$GO" test -C "$repo" -c -o "$work/bin/attacker" ./test/e2e/attacker
 	tb ceremony split --threshold 2 --holders alice,bob,carol --out-dir "$work/ceremony" >/dev/null
 	trustee_tree
 	bundle_sha256=$(tb seal --manifest "$work/ceremony/ceremony.json" --output "$work/bundle.age" "$work/tree")
@@ -341,6 +347,22 @@ check_tmpfs() {
 	info "state: in the guest, the state volume is $(head -1 <<<"$out" | cut -d' ' -f1-3); the init container's file reached the main container; the host's side is empty"
 }
 
+# AT-21 and AT-22 against the unlocked Trustee, by the host from the node's
+# network (test/e2e/attacker). The forged token carries the claims the
+# sealed policy wants. check_workloads then shows that policy still rules.
+check_host_attacks() {
+	local url out
+	url=https://$(kc get service trustee -o jsonpath='{.spec.clusterIP}'):8080
+	eng cp "$work/bin/attacker" "$CLUSTER-control-plane:/tmp/attacker"
+	for attack in forge admin; do
+		out=$(node /tmp/attacker -test.run '^TestAttack$' -test.v -attack "$attack" -kbs "$url" -resource "$SECRET" \
+			-pcr8 "$(printf '%s' "$authorized" | pcr8_for)" -ak "$ak" 2>&1) || die "$attack against Trustee: $out"
+		[[ $out == *"HTTP "* ]] || die "$attack against Trustee: no answer: $out"
+	done
+	info "AT-21: Trustee refused a forged token naming the host's TEE key"
+	info "AT-22: Trustee refused resource policy replacements without the admin key"
+}
+
 # Workload Attestation against the unlocked Trustee.
 check_workloads() {
 	local got
@@ -380,7 +402,7 @@ check_trustee_restart() {
 
 # The same pod and policy, with one helper arg changed.
 check_tampered() {
-	kc delete pod "$POD" --wait >/dev/null
+	kc delete pod "$POD" --ignore-not-found --wait >/dev/null
 	sed 's|--proxy-port=8081|--proxy-port=8082|' "$work/trustee-cvm.yaml" | kc apply -f - >/dev/null
 	local events='' uid
 	uid=$(kc get pod "$POD" -o jsonpath='{.metadata.uid}')
@@ -402,7 +424,7 @@ check_tampered() {
 # manifest ConfigMap. The policy can't pin ConfigMap contents, so the helper
 # starts, and --manifest-sha256 makes it fail in LOCKED.
 check_swapped_manifest() {
-	kc delete pod "$POD" --wait >/dev/null
+	kc delete pod "$POD" --ignore-not-found --wait >/dev/null
 	mkdir -p "$work/other"
 	tb ceremony split --threshold 2 --holders x,y --out-dir "$work/other" >/dev/null
 	eng cp "$work/other/ceremony.json" "$CLUSTER-control-plane:/tmp/trustee-cvm/other.json"
@@ -440,6 +462,7 @@ main() {
 	unlock
 	check_policy
 	check_host_view
+	check_host_attacks
 	check_workloads
 	check_trustee_restart
 	check_tampered

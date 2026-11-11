@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -138,8 +139,29 @@ var opts = verifier.Options{
 	SharePayload:    []byte(`{"index":1}`),
 }
 
+// tmpfsMagic is Linux's TMPFS_MAGIC.
+const tmpfsMagic = 0x01021994
+
+// tmpfsDir returns a fresh directory on tmpfs, where the Operator Verifier
+// must keep its run directory.
+func tmpfsDir(t *testing.T) string {
+	t.Helper()
+	for _, parent := range []string{os.Getenv("XDG_RUNTIME_DIR"), "/dev/shm", os.TempDir()} {
+		var st syscall.Statfs_t
+		if parent == "" || syscall.Statfs(parent, &st) != nil || st.Type != tmpfsMagic {
+			continue
+		}
+		if dir, err := os.MkdirTemp(parent, "verifier-test-"); err == nil {
+			t.Cleanup(func() { os.RemoveAll(dir) })
+			return dir
+		}
+	}
+	t.Skip("no writable tmpfs directory")
+	return ""
+}
+
 func TestStartKBSBinary(t *testing.T) {
-	runDirs := t.TempDir()
+	runDirs := tmpfsDir(t)
 	t.Setenv("XDG_RUNTIME_DIR", runDirs)
 	kbs := fakeExecutable(t, "kbs", "exec sleep 60")
 	o := opts
@@ -213,6 +235,11 @@ func assertRunDir(t *testing.T, dir string) {
 	if rv.Version != "0.1.0" || rv.Name != "trusted_aks" || !slices.Equal(rv.Value, []string{"AK"}) || len(rv.Expiration) != 20 {
 		t.Errorf("reference value = %+v", rv)
 	}
+	// KBS writes the AS's default policies here. A rootful engine writes
+	// them as root, so the directory must already be the operator's.
+	if info, err := os.Stat(filepath.Join(dir, storage, "attestation_service_policy")); err != nil || !info.IsDir() {
+		t.Errorf("AS policy directory not created up front: %v", err)
+	}
 }
 
 // assertSigner checks that the AS signer's certificate is self-signed for
@@ -240,7 +267,7 @@ func assertSigner(t *testing.T, keyPEM, certPEM []byte) {
 }
 
 func TestStartContainer(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", tmpfsDir(t))
 	engine := fakeExecutable(t, "podman", "exec sleep 60")
 
 	addr, stop, err := runtime(answering{engine}, engine).Start(t.Context(), "127.0.0.1:0", opts)
@@ -265,7 +292,7 @@ func TestStartContainer(t *testing.T) {
 }
 
 func TestStartReportsKBSFailure(t *testing.T) {
-	runDirs := t.TempDir()
+	runDirs := tmpfsDir(t)
 	t.Setenv("XDG_RUNTIME_DIR", runDirs)
 	o := opts
 	o.KBSBinary = fakeExecutable(t, "kbs", "echo 'bad config' >&2; exit 1")
@@ -276,6 +303,71 @@ func TestStartReportsKBSFailure(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(runDirs); len(entries) != 0 {
 		t.Errorf("run directory left behind: %v", entries)
+	}
+}
+
+// KBS output is held in memory until KBS answers, so only its tail is kept:
+// the end, where a failing KBS says why.
+func TestStartKeepsTheTailOfKBSOutput(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", tmpfsDir(t))
+	o := opts
+	o.KBSBinary = fakeExecutable(t, "kbs", "head -c 200000 /dev/zero | tr '\\0' '#'; echo; echo 'bad config' >&2; exit 1")
+
+	_, _, err := runtime(silent{}, "").Start(t.Context(), "127.0.0.1:0", o)
+	if err == nil || !strings.HasSuffix(err.Error(), "#\nbad config") {
+		t.Fatalf("Start = %.100q..., want it to end with KBS's last words", err)
+	}
+	// 64 KiB of output, less "\nbad config\n".
+	if got := strings.Count(err.Error(), "#"); got != 65536-12 {
+		t.Errorf("Start error holds %d bytes of earlier KBS output, want %d", got, 65536-12)
+	}
+}
+
+// The Share payload goes into the run directory, so it must be in memory.
+func TestStartRefusesARunDirectoryOffTmpfs(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(wd, &st); err != nil || st.Type == tmpfsMagic {
+		t.Skipf("the source tree is on tmpfs or unreadable (%v)", err)
+	}
+	for parent, want := range map[string]string{wd: "is not on tmpfs", filepath.Join(wd, "missing"): "check run directory"} {
+		t.Setenv("XDG_RUNTIME_DIR", parent)
+		kbs := fakeExecutable(t, "kbs", "exec sleep 60")
+		o := opts
+		o.KBSBinary = kbs
+
+		_, _, err := runtime(answering{kbs}, "").Start(t.Context(), "127.0.0.1:0", o)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("run directory in %s: Start = %v, want %q", parent, err, want)
+		}
+		if left, _ := filepath.Glob(filepath.Join(wd, "trustee-bootstrap-verifier-*")); len(left) != 0 {
+			t.Errorf("Start created %v", left)
+			for _, d := range left {
+				os.RemoveAll(d)
+			}
+		}
+		if _, err := os.Stat(kbs + ".args"); err == nil {
+			t.Error("KBS started")
+		}
+	}
+}
+
+// AT-02: the Operator Verifier is never reachable from the network.
+func TestStartRefusesANonLoopbackAddress(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", tmpfsDir(t))
+	kbs := fakeExecutable(t, "kbs", "exec sleep 60")
+	o := opts
+	o.KBSBinary = kbs
+
+	_, _, err := runtime(answering{kbs}, "").Start(t.Context(), "0.0.0.0:0", o)
+	if err == nil || !strings.Contains(err.Error(), "127.0.0.1") {
+		t.Errorf("Start on 0.0.0.0 = %v, want a refusal", err)
+	}
+	if _, err := os.Stat(kbs + ".args"); err == nil {
+		t.Error("KBS started")
 	}
 }
 
