@@ -4,7 +4,7 @@
 
 **What counts as an upgrade:** a new Trustee (KBS) image, a new Bootstrap Helper image, a new `trustee-bootstrap` release, a Kata or genpolicy change, or any change to Trustee's config, policy, resources or reference values.
 
-**Why it needs a full round:** the Kata Agent policy in Init-Data pins both images and the helper's arguments, so a new image means new Init-Data and a new Init-Data digest. Trustee's config lives only in the Sealed Bundle, so a config change means a new bundle and a new digest. Each Security Operator's Operator Policy names both digests. A restart also loses every runtime admin write (ADR 0002).
+**Why it needs a full round:** the Kata Agent policy in Init-Data pins both images and the helper's arguments, so a new image means new Init-Data and a new Init-Data digest. Trustee's config lives only in the Sealed Bundle, so a config change means a new bundle and a new digest. Each Security Operator's Operator Policy names both digests. Recreating the pod also loses every runtime admin write (ADR 0002).
 
 **Mitigates:** *Trustee replaced after unlock* (the agent policy pins the images, and Security Operators re-review them), *upstream sample configs are unsafe* (you start again from the release's secure config), and *availability* (you plan the outage). See `SECURITY_THREAT_MODEL.md`.
 

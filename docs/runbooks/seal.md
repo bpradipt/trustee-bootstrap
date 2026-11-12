@@ -37,7 +37,7 @@
    printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' "$host" >tls.ext
    openssl x509 -req -in tls.csr -signkey tree/tls.key -days 365 -extfile tls.ext -out tree/tls.crt
    ```
-4. Create the AS token signer (P-256) and the admin key. Keep only the admin public key, unless your site has a vault for the private half. Runtime admin writes are lost on every restart anyway (ADR 0002):
+4. Create the AS token signer (P-256) and the admin key. Keep only the admin public key, unless your site has a vault for the private half. Runtime admin writes are lost whenever the pod or the CVM is recreated anyway (ADR 0002):
    ```sh
    openssl ecparam -name prime256v1 -genkey -noout -out tree/as-signer.key
    openssl req -x509 -new -key tree/as-signer.key -subj "/CN=Trustee AS signer" -days 365 -out tree/as-signer.crt
