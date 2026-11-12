@@ -2,7 +2,9 @@ package verifier_test
 
 import (
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,10 +49,54 @@ func TestSealedConfigChecksRefuseEachViolation(t *testing.T) {
 			}
 			// Paths and values from the tree are plaintext metadata (spec
 			// §0.6); the error reaches stderr and the audit records.
-			for _, leak := range []string{root, "InsecureAllowAll", "Postgres", "/opt/kbs", "storage/kbs", "as-signer"} {
+			for _, leak := range []string{root, "InsecureAllowAll", "Postgres", "/opt/kbs", "storage/kbs", "as-signer",
+				"tls.", "example.com", "8.8.8.8", "BEGIN"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Errorf("CheckSealedConfig error %q holds %q from the tree", err, leak)
 				}
+			}
+		})
+	}
+}
+
+// Workloads pin Trustee's certificate on top of their system CAs, so it may
+// name only hosts that no public CA certifies. The check fails closed at the
+// edges (ticket 18).
+func TestSealedConfigChecksAllowOnlyClusterInternalTLSNames(t *testing.T) {
+	tests := []struct {
+		name string
+		dns  []string
+		ips  []string
+		ok   bool
+	}{
+		{"Service name", []string{"trustee.default.svc"}, nil, true},
+		{"default cluster domain", []string{"trustee.default.svc.cluster.local"}, nil, true},
+		{"private-use TLD", []string{"trustee.internal"}, nil, true},
+		{"private IPv4", nil, []string{"10.96.0.10"}, true},
+		{"IPv6 ULA", nil, []string{"fd00::10"}, true},
+		{"names and addresses", []string{"trustee.default.svc"}, []string{"192.168.1.5"}, true},
+		{"cluster domain under a public name", []string{"trustee.default.svc.k8s.example.com"}, nil, false},
+		{"private TLD", []string{"trustee.corp"}, nil, false},
+		{"one public name among internal ones", []string{"trustee.default.svc", "trustee.example.com"}, nil, false},
+		{"CGNAT ClusterIP", nil, []string{"100.64.0.10"}, false},
+		{"public IPv6", nil, []string{"2001:4860:4860::8888"}, false},
+		{"one public address among private ones", []string{"trustee.default.svc"}, []string{"10.0.0.1", "1.1.1.1"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := trusteetest.Tree(t, verifier.TrusteeRoot)
+			trusteetest.WriteTLS(t, dir, func(c *x509.Certificate) {
+				c.DNSNames = tt.dns
+				for _, ip := range tt.ips {
+					c.IPAddresses = append(c.IPAddresses, net.ParseIP(ip))
+				}
+			})
+			err := verifier.CheckSealedConfig(dir, verifier.TrusteeRoot)
+			if tt.ok && err != nil {
+				t.Fatalf("CheckSealedConfig = %v, want it to pass", err)
+			}
+			if !tt.ok && (err == nil || !strings.Contains(err.Error(), "outside the cluster")) {
+				t.Fatalf("CheckSealedConfig = %v, want a host outside the cluster", err)
 			}
 		})
 	}

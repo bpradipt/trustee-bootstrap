@@ -1,6 +1,8 @@
 package verifier
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -198,7 +200,59 @@ func CheckSealedConfig(dir, root string) error {
 	if c.SessionStorageType != SessionStorageMemory {
 		sessions = errors.New("session_storage_type is not " + SessionStorageMemory)
 	}
-	return errors.Join(CheckSecure(c), insecureHTTP, sessions, checkSigner(tree, root, c), checkResourcePolicy(tree, root, c))
+	return errors.Join(CheckSecure(c), insecureHTTP, sessions, checkSigner(tree, root, c), checkResourcePolicy(tree, root, c),
+		checkTLS(tree, root, c))
+}
+
+// clusterSuffixes are DNS suffixes that no public CA certifies: Kubernetes
+// Service names, mDNS (which holds the default cluster.local), and ICANN's
+// private-use TLD.
+var clusterSuffixes = []string{".svc", ".local", ".internal"}
+
+// checkTLS requires Trustee's HTTPS key and certificate in the tree, as a
+// matching pair whose certificate is a leaf naming only cluster-internal
+// hosts. Workloads add the certificate to their system CAs as kbs_cert
+// (spec §1), so a name that a public CA would certify lets that CA's
+// customers impersonate Trustee. The guest's rustls refuses a CA
+// certificate as a server's own.
+func checkTLS(tree *os.Root, root string, c Config) error {
+	keyPEM, keyErr := readInTree(tree, root, c.HTTPServer.PrivateKey)
+	certPEM, certErr := readInTree(tree, root, c.HTTPServer.Certificate)
+	if err := errors.Join(wrapErr("[http_server] private_key", keyErr), wrapErr("[http_server] certificate", certErr)); err != nil {
+		return err
+	}
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return errors.New("Trustee TLS key and certificate are not a matching PEM pair")
+	}
+	cert := pair.Leaf // X509KeyPair parses it (Go 1.23 and later)
+	var errs []error
+	if cert.IsCA {
+		errs = append(errs, errors.New("Trustee TLS certificate is a CA certificate, which the guest refuses as a server certificate"))
+	}
+	if len(cert.DNSNames)+len(cert.IPAddresses) == 0 {
+		errs = append(errs, errors.New("Trustee TLS certificate names no DNS name or IP address"))
+	} else if !clusterInternal(cert) {
+		errs = append(errs, errors.New("Trustee TLS certificate names a host outside the cluster: "+
+			"use DNS names under .svc, .local or .internal, and private IP addresses"))
+	}
+	return errors.Join(errs...)
+}
+
+// clusterInternal reports whether every host the certificate names is one
+// that no public CA certifies.
+func clusterInternal(cert *x509.Certificate) bool {
+	for _, name := range cert.DNSNames {
+		if !slices.ContainsFunc(clusterSuffixes, func(s string) bool { return strings.HasSuffix(name, s) }) {
+			return false
+		}
+	}
+	for _, ip := range cert.IPAddresses {
+		if !ip.IsPrivate() {
+			return false
+		}
+	}
+	return true
 }
 
 // SessionStorageMemory is KBS's in-memory session storage.

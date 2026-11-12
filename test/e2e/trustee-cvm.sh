@@ -170,13 +170,7 @@ trustee_tree() {
 	local t=$work/tree
 	mkdir -p "$t/storage/kbs" "$t/storage/repository" "$t/storage/reference_value"
 	cp "$examples/trustee-config/kbs.toml" "$t/"
-	# A self-signed leaf certificate: rustls refuses a CA certificate as the
-	# server's own.
-	openssl ecparam -name prime256v1 -genkey -noout -out "$t/tls.key"
-	openssl req -new -key "$t/tls.key" -subj "/CN=$TRUSTEE_HOST" -out "$work/tls.csr"
-	printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' \
-		"$TRUSTEE_HOST" >"$work/tls.ext"
-	openssl x509 -req -in "$work/tls.csr" -signkey "$t/tls.key" -days 2 -extfile "$work/tls.ext" -out "$t/tls.crt" 2>/dev/null
+	tls_pair "$t" "$TRUSTEE_HOST"
 	openssl ecparam -name prime256v1 -genkey -noout -out "$t/as-signer.key"
 	openssl req -x509 -new -key "$t/as-signer.key" -subj "/CN=Trustee AS signer" -days 2 -out "$t/as-signer.crt"
 	# The admin key's private half is never kept.

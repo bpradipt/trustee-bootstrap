@@ -76,6 +76,7 @@ setup() {
 	sed 's#/trustee/config#/tmp/trustee#' "$repo/deploy/examples/trustee-config/kbs.toml" >"$work/tree/kbs.toml"
 	echo placeholder >"$work/tree/as-signer.key"
 	echo placeholder >"$work/tree/as-signer.crt"
+	tls_pair "$work/tree" trustee.default.svc.cluster.local
 	printf 'package policy\n\ndefault allow := false\n' >"$work/tree/storage/kbs/resource-policy.rego"
 	bundle_sha256=$(tb seal --manifest "$work/ceremony/ceremony.json" --output "$work/files/bundle.age" \
 		--root /tmp/trustee "$work/tree")

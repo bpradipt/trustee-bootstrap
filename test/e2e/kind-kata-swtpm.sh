@@ -327,6 +327,17 @@ initdata() {
 	EOF
 }
 
+# tls_pair <dir> <host>: Trustee's HTTPS key and a self-signed leaf
+# certificate that names host, as tls.key and tls.crt in dir. The guest's
+# rustls and the sealed-config checks both refuse a CA certificate.
+tls_pair() {
+	openssl ecparam -name prime256v1 -genkey -noout -out "$1/tls.key"
+	openssl req -new -key "$1/tls.key" -subj "/CN=$2" |
+		openssl x509 -req -signkey "$1/tls.key" -days 2 -out "$1/tls.crt" -extfile <(
+			printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' "$2"
+		) 2>/dev/null
+}
+
 # Expected PCR8 after the AA extends it once with the Init-Data digest.
 pcr8_for() {
 	python3 -c 'import hashlib,sys; d=hashlib.sha256(sys.stdin.buffer.read()).digest(); print(hashlib.sha256(bytes(32)+d).hexdigest())'
