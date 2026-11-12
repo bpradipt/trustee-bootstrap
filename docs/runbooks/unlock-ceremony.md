@@ -83,6 +83,7 @@ Today no claim profile has passed a real-TEE run (`docs/claim-profiles.md`), so 
    grep -A2 '"ExecProcessRequest": {' init.toml             # allowed_commands and regex both []
    grep -n '"ReadStreamRequest"' init.toml                  # false
    grep -n 'url = ' init.toml                                # http://127.0.0.1:8081 only
+   grep -o '"io.kubernetes.cri.container-name": "[^"]*"' init.toml | sort -u   # bootstrap-helper and trustee, nothing else
    ```
    Read the rest of the `policy.rego` entry as well. A hash proves only that every Security Operator saw the same file.
 2. Build your Operator Policy. It computes the Init-Data digest from the file you reviewed, and checks your Share against the Ceremony Manifest:
