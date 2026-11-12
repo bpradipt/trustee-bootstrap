@@ -222,6 +222,13 @@ render_pod() {
 	sed "s|@HELPER_IMAGE@|$helper_image|; s|@MANIFEST_SHA256@|$manifest_sha256|" "$examples/trustee-cvm.yaml" >"$work/trustee-cvm.yaml"
 	"$gp/genpolicy" -y "$work/trustee-cvm.yaml" -p "$gp/rules.rego" -j "$gp" \
 		--initdata-path="$work/init-data.toml" --insecure-registry="$registry" >/dev/null
+	extract_initdata
+}
+
+# extract_initdata: init.toml, the Init-Data that genpolicy put in the
+# rendered pod's annotation: what the CVM measures and the Security
+# Operators review.
+extract_initdata() {
 	python3 - "$work/trustee-cvm.yaml" >"$work/init.toml" <<-'EOF'
 		import base64, gzip, re, sys
 		m = re.search(r'cc_init_data: *"?([A-Za-z0-9+/=]+)', open(sys.argv[1]).read())
@@ -244,8 +251,14 @@ deploy() {
 	kc create configmap trustee-ceremony-manifest --from-file=/tmp/trustee-cvm/ceremony.json >/dev/null
 	kc create configmap trustee-sealed-bundle --from-file=/tmp/trustee-cvm/bundle.age >/dev/null
 	kc apply -f - <"$work/trustee-cvm.yaml" >/dev/null
-	endpoint=http://$(kc get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'):$(
-		kc get service "$HELPER_SVC" -o jsonpath='{.spec.ports[0].nodePort}')
+	endpoint=$(helper_endpoint)
+}
+
+# helper_endpoint: the URL Security Operators use, the helper Service's
+# NodePort on the node.
+helper_endpoint() {
+	echo "http://$(kc get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'):$(
+		kc get service "$HELPER_SVC" -o jsonpath='{.spec.ports[0].nodePort}')"
 }
 
 wait_helper() {
@@ -425,10 +438,10 @@ check_swapped_manifest() {
 	info "AT-11: with another ceremony.json in the ConfigMap, the helper exited 1 in LOCKED"
 }
 
-# setup: everything up to the Security Operators' review: the registry and
-# the helper image, a 2-of-3 Key Ceremony, the Sealed Bundle, and the
-# rendered pod with its Init-Data. golden-path.sh shares it.
-setup() {
+# prepare: the plumbing every Unlock Ceremony here needs: genpolicy, the
+# registry, the helper image and the swtpm reference values. demo.sh runs
+# it off camera.
+prepare() {
 	delete_objects --wait || true
 	gw=$(node ip -4 route show default | awk '{print $3}')
 	ak=$(node sed '/-----/d' /opt/kata-swtpm/ak.pem | tr -d '\n')
@@ -436,6 +449,13 @@ setup() {
 	genpolicy_tool
 	registry_up
 	build_helper
+}
+
+# setup: everything up to the Security Operators' review: prepare, a 2-of-3
+# Key Ceremony, the Sealed Bundle, and the rendered pod with its Init-Data.
+# golden-path.sh shares it.
+setup() {
+	prepare
 	ceremony_and_seal
 	cvm_initdata
 	render_pod
