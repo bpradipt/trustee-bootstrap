@@ -1,7 +1,7 @@
 # Trustee-in-CVM: Implementation Specification
 
-**Status:** Design agreed; Phase 0 must confirm the upstream facts marked *(Phase 0)*  
-**Version:** v1.0 (baseline) | **Date:** 2026-11-10  
+**Status:** Phases 0 to 2 implemented on swtpm and green in CI; Phase 3's real-TEE release gate (ticket 17) is open. No production unlock until it passes. §9 ticks each item and names the ticket that holds the evidence; [`docs/tickets/`](docs/tickets/README.md) has the full status.  
+**Version:** v1.1 | **Date:** 2026-11-12  
 **Companions:** `SECURITY_THREAT_MODEL.md`, `GLOSSARY.md`, `docs/adr/`
 
 Terms in **bold** are defined in `GLOSSARY.md`. Design rationale lives in the ADRs and is not repeated here.
@@ -33,7 +33,7 @@ Unlock an unmodified, full CNCF Trustee running in a **Trustee CVM** only after 
 
 **How workloads trust Trustee:** Trustee's TLS private key exists only inside the Sealed Bundle, once the Infrastructure Operator has destroyed the plaintext they sealed it from (ADR 0008). Workloads add Trustee's certificate (`kbs_cert`) to their own Init-Data. Rotating Trustee's certificate means sealing a new bundle and updating every workload's Init-Data.
 
-`kbs_cert` *adds* a trust root; the guest keeps trusting its system CAs. So Trustee's certificate must name a host that no public CA will certify: a cluster-internal DNS name or a private IP. Otherwise anyone holding a publicly trusted certificate for that name can impersonate Trustee to workloads. An impostor still can't obtain workload secrets, but it can serve workloads fake resources. *(Phase 0: check whether guest-components can disable the system roots.)*
+`kbs_cert` *adds* a trust root; the guest keeps trusting its system CAs. So Trustee's certificate must name a host that no public CA will certify: a cluster-internal DNS name or a private IP. Otherwise anyone holding a publicly trusted certificate for that name can impersonate Trustee to workloads. An impostor still can't obtain workload secrets, but it can serve workloads fake resources. *(Phase 0 result: guest-components v0.22.0 can't. Ticket 06 records the upstream gap and the smallest fix.)*
 
 ## 2. Actors
 
@@ -180,9 +180,9 @@ This is one Cobra tree in `pkg/cli`, `NewTrusteeBootstrapCmd()`. `cococtl` mount
   - the images;
   - the Bootstrap Helper's args, including `--manifest-sha256`;
   - the mounts;
-  - denial of exec and of additional containers *(Phase 0: confirm the genpolicy defaults)*.
+  - denial of exec and of additional containers *(Phase 0 result: confirmed for genpolicy at Kata 4.2.0, ticket 06)*.
 - **ConfigMaps** (untrusted): `ceremony.json` and the Sealed Bundle (or a Secret, if the platform requires it).
-- **State volume.** One `emptyDir` with `medium: Memory`, a tmpfs inside the guest *(Phase 0: prove it is guest-side on every platform)*, shared by the init and main containers. The Bootstrap Helper publishes the whole unsealed tree into it: the KBS config plus the initial contents of the KBS storage backend (resource policy, resources, AS policies, RVPS reference values). Trustee's UID owns it and can write to it.
+- **State volume.** One `emptyDir` with `medium: Memory`, a tmpfs inside the guest *(Phase 0 result: proved on Kata with swtpm, ticket 06; peer-pods and real TEEs still to check)*, shared by the init and main containers. The Bootstrap Helper publishes the whole unsealed tree into it: the KBS config plus the initial contents of the KBS storage backend (resource policy, resources, AS policies, RVPS reference values). Trustee's UID owns it and can write to it.
   - KBS loads policies and resources from its storage backend and installs its built-in default policy when none is present. The sealed config must therefore point `storage_backend` at the published tree, so Trustee starts with the approved state.
   - The sealed config sets `session_storage_type` to in-memory, so RCAR sessions never touch the published tree.
   - The volume isn't read-only, because KBS and AS write default policies and sessions at startup. Read-only would only stop a compromised Trustee process, which is out of scope. Under ADR 0002, everything on it disappears on restart.
@@ -210,37 +210,37 @@ test/e2e/                # kind + Kata + swtpm, end to end
 
 ### Phase 0 — spike (blocking)
 
-- [ ] Pin Trustee, guest-components, Kata, genpolicy, and CAA for peer-pods.
-- [ ] Get the Kata + swtpm TPM attester running in a CI runner with KVM. Confirm what Trustee's TPM verifier requires (AK/EK trust) and that the Init-Data digest appears in its claims.
-- [ ] Write the claim-profile table (§6) for tdx, snp, az-snp-vtpm, az-tdx-vtpm and tpm at the pinned Trustee version, with positive and negative evidence fixtures for each profile.
-- [ ] Run stock CDH `get_resource` through a guest-loopback proxy and a WebSocket relay to a local `insecure_http` KBS with a benign resource, using a resource policy keyed on the Init-Data digest.
-- [ ] Confirm genpolicy pins the Bootstrap Helper's args and denies exec in the generated policy.
-- [ ] Confirm `medium: Memory` `emptyDir` is guest-side tmpfs and survives the init-to-main handoff (Kata bare metal and peer-pods).
-- [ ] Confirm the KBS container image runs on Linux and WSL with `127.0.0.1` port publishing.
-- [ ] Confirm the pinned KBS rejects a self-signed bearer token when `insecure_header_jwk = false`, and rejects admin calls without the ephemeral admin key.
-- [ ] Pin the exact KBS `storage_backend` and `session_storage_type` settings, and the on-disk layout of the published tree, that make unlocked Trustee serve the sealed policy and resources rather than its built-in default. Record the exact resource-policy key that sealed-config check 3 tests for.
-- [ ] Confirm that a syntactically broken sealed resource policy makes KBS deny every request rather than fall back to the default.
-- [ ] Confirm the AS token broker accepts a supplied signer key and certificate, and that KBS verifies tokens against `trusted_certs_paths` with `insecure_header_jwk = false`.
-- [ ] Check whether guest-components can trust `kbs_cert` alone, without the system roots. If it can't, record that as an upstream gap.
+- [ ] Pin Trustee, guest-components, Kata, genpolicy, and CAA for peer-pods. *(Ticket 01, [`docs/upstream-pins.md`](docs/upstream-pins.md). Open: the CAA image digest, which needs quay.io access.)*
+- [x] Get the Kata + swtpm TPM attester running in a CI runner with KVM. Confirm what Trustee's TPM verifier requires (AK/EK trust) and that the Init-Data digest appears in its claims. *(Ticket 04. The verifier never checks the EK; only the AS policy's `trusted_aks` decides whether an AK is trusted.)*
+- [x] Write the claim-profile table (§6) for tdx, snp, az-snp-vtpm, az-tdx-vtpm and tpm at the pinned Trustee version, with positive and negative evidence fixtures for each profile. *(Ticket 14, [`docs/claim-profiles.md`](docs/claim-profiles.md). The fixtures come from verifier source, so every profile stays untested until ticket 17.)*
+- [x] Run stock CDH `get_resource` through a guest-loopback proxy and a WebSocket relay to a local `insecure_http` KBS with a benign resource, using a resource policy keyed on the Init-Data digest. *(Ticket 05.)*
+- [x] Confirm genpolicy pins the Bootstrap Helper's args and denies exec in the generated policy. *(Ticket 06.)*
+- [ ] Confirm `medium: Memory` `emptyDir` is guest-side tmpfs and survives the init-to-main handoff (Kata bare metal and peer-pods). *(Ticket 06 proved it on Kata with swtpm. Open: peer-pods.)*
+- [ ] Confirm the KBS container image runs on Linux and WSL with `127.0.0.1` port publishing. *(Linux: tickets 05 and 13. Open: WSL.)*
+- [x] Confirm the pinned KBS rejects a self-signed bearer token when `insecure_header_jwk = false`, and rejects admin calls without the ephemeral admin key. *(Ticket 13, against both the Operator Verifier and the unlocked Trustee.)*
+- [x] Pin the exact KBS `storage_backend` and `session_storage_type` settings, and the on-disk layout of the published tree, that make unlocked Trustee serve the sealed policy and resources rather than its built-in default. Record the exact resource-policy key that sealed-config check 3 tests for. *(Ticket 06: `storage/kbs/resource-policy.rego`.)*
+- [ ] Confirm that a syntactically broken sealed resource policy makes KBS deny every request rather than fall back to the default. *(Ticket 14 saw the pinned KBS deny every request when it could not load a policy. Open: the same check with a broken sealed policy in the Trustee CVM.)*
+- [x] Confirm the AS token broker accepts a supplied signer key and certificate, and that KBS verifies tokens against `trusted_certs_paths` with `insecure_header_jwk = false`. *(Ticket 05.)*
+- [x] Check whether guest-components can trust `kbs_cert` alone, without the system roots. If it can't, record that as an upstream gap. *(Ticket 06: it can't; the gap and the smallest fix are recorded there.)*
 
 **Stop/escalate** if any item fails. Write up the blocker and the smallest upstream change. Never fall back to self-reported evidence, a plaintext share POST, or a host-visible volume.
 
 ### Phase 1 — formats and components (no VM)
 
-- [ ] `pkg/ceremony`, `pkg/seal`, `pkg/policy` and their commands, with unit tests, including every negative case in §10.
-- [ ] `pkg/relay` with limit, disconnect and framing tests.
-- [ ] `pkg/helper` state machine against a fake CDH.
+- [x] `pkg/ceremony`, `pkg/seal`, `pkg/policy` and their commands, with unit tests, including every negative case in §10. *(Tickets 02, 08, 09, 10 and 14.)*
+- [x] `pkg/relay` with limit, disconnect and framing tests. *(Tickets 03 and 12.)*
+- [x] `pkg/helper` state machine against a fake CDH. *(Tickets 02, 03, 08, 09 and 11.)*
 
 ### Phase 2 — end to end on TPM (CI)
 
-- [ ] kind + Kata + swtpm: two Security Operators unlock a 2-of-3 Trustee CVM. Trustee starts, then attests a separate workload that pins its certificate.
-- [ ] All §10 tests that need no real TEE run in CI on every PR.
+- [x] kind + Kata + swtpm: two Security Operators unlock a 2-of-3 Trustee CVM. Trustee starts, then attests a separate workload that pins its certificate. *(Ticket 06.)*
+- [x] All §10 tests that need no real TEE run in CI on every PR. *(Ticket 07. A PR that changes only documentation skips the e2e job; every push to `main` runs it.)*
 
 ### Phase 3 — release gate (real TEE) and hardening
 
-- [ ] Repeat Phase 2 on at least one of TDX, SNP or Azure vTPM. A production Operator Policy may accept only the TEE types whose claim profile has passed a real-TEE run.
-- [ ] Redacted audit events. Runbooks for the Unlock Ceremony, Trustee upgrades, and roster change by a fresh Key Ceremony.
-- [ ] SBOM, dependency pinning, and no test-only flags on the production path.
+- [ ] Repeat Phase 2 on at least one of TDX, SNP or Azure vTPM. A production Operator Policy may accept only the TEE types whose claim profile has passed a real-TEE run. *(Ticket 17, open.)*
+- [x] Redacted audit events. Runbooks for the Unlock Ceremony, Trustee upgrades, and roster change by a fresh Key Ceremony. *(Ticket 16, [`docs/runbooks/`](docs/runbooks/).)*
+- [x] SBOM, dependency pinning, and no test-only flags on the production path. *(Ticket 16; `test/supplychain` keeps it that way.)*
 
 ## 10. Acceptance tests
 
