@@ -77,7 +77,7 @@ workload-ok   0/1     Completed   0          19s
 $ kubectl logs workload-ok
 trustee-workload-ok
 
-$ kubectl get events --field-selector involvedObject.name=workload-ok --sort-by=.lastTimestamp \
+$ kubectl get events --field-selector involvedObject.uid=$(kubectl get pod workload-ok -o jsonpath='{.metadata.uid}') --sort-by=.lastTimestamp \
     -o custom-columns=TYPE:.type,REASON:.reason,OBJECT:.involvedObject.fieldPath,MESSAGE:.message
 TYPE     REASON      OBJECT                   MESSAGE
 Normal   Scheduled   <none>                   Successfully assigned default/workload-ok to <node>

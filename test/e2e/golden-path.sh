@@ -38,9 +38,15 @@ show() {
 
 section() { printf '\n######## %s\n' "$*"; }
 pod() { kc get pod "$1" -o jsonpath="$2"; }
-events() { kc get events --field-selector "involvedObject.name=$1" --sort-by=.lastTimestamp -o "custom-columns=$2"; }
-show_events() { show "kubectl get events --field-selector involvedObject.name=$1 --sort-by=.lastTimestamp -o custom-columns=$2" events "$1" "$2"; }
-warnings() { grep '^Warning' <<<"$out" || true; }
+# events <pod> <columns>: this pod's events. A selector on the name would
+# also match the events, kept for an hour, of an earlier pod with that name.
+events() { kc get events --field-selector "involvedObject.uid=$(pod "$1" '{.metadata.uid}')" --sort-by=.lastTimestamp -o "custom-columns=$2"; }
+show_events() {
+	show "kubectl get events --field-selector involvedObject.uid=\$(kubectl get pod $1 -o jsonpath='{.metadata.uid}') --sort-by=.lastTimestamp -o custom-columns=$2" \
+		events "$1" "$2"
+}
+# warnings [allowed]: the Warning events in $out, less those matching allowed.
+warnings() { grep '^Warning' <<<"$out" | grep -Ev "${1:-^$}" || true; }
 
 # has_row <column>...: $out has a line that starts with these columns.
 has_row() { grep -Eq "^$(printf '%s +' "$@")" <<<"$out"; }
@@ -136,9 +142,9 @@ ev17() {
 	show "kubectl get endpoints $HELPER_SVC trustee" kc get endpoints "$HELPER_SVC" trustee
 	has_row trustee "$pod_ip:8080" || die "the trustee Service has no endpoint after the unlock"
 	show_events "$POD" "$EVENT_COLUMNS"
-	if warnings | grep -Evq 'Unhealthy +spec\.containers\{trustee\} +Readiness probe failed'; then
-		die "unexpected Warning events: $(warnings)"
-	fi
+	local unexpected
+	unexpected=$(warnings 'Unhealthy +spec\.containers\{trustee\} +Readiness probe failed')
+	[[ -z $unexpected ]] || die "unexpected Warning events: $unexpected"
 	for c in bootstrap-helper trustee; do
 		show "kubectl logs $POD -c $c" kc logs "$POD" -c "$c"
 		((rc == 0)) || die "kubectl logs -c $c failed"
