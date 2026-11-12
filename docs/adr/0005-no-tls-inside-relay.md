@@ -1,6 +1,6 @@
 # No TLS on the bootstrap relay, inner or outer
 
-The Operator Verifier serves plain HTTP on 127.0.0.1, and the Bootstrap Helper serves plain HTTP/WebSocket. TLS from an Ingress, a LoadBalancer or port-forward is allowed but is not a security boundary. This deliberately deviates from the pre-baseline draft spec's end-to-end inner TLS.
+The Operator Verifier serves plain HTTP on 127.0.0.1, and the Bootstrap Helper serves plain HTTP/WebSocket. TLS from an Ingress or a LoadBalancer is allowed but is not a security boundary. This deliberately deviates from the pre-baseline draft spec's end-to-end inner TLS.
 
 Every security property is carried elsewhere:
 
