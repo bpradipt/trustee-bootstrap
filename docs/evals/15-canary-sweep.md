@@ -1,7 +1,7 @@
 # EV-15: Canary sweep after a full unlock
 
 **Category:** secret hygiene
-**Runs on:** kind + swtpm; rerun on a real TEE in ticket 17
+**Runs on:** kind + swtpm, `test/e2e/evals.sh ev15`; rerun on a real TEE in ticket 17
 **Covers:** invariant 6; spec §0 requirement 6; the audit-record rules in the [runbooks README](../runbooks/README.md); e2e `check_host_view`, which checks only the state volume
 
 ## Setup
@@ -31,6 +31,24 @@ On swtpm the host can read guest memory, so this eval leaves it out. On a real T
 
 Rootless podman may log a container's output to the user journal, and that log outlives `--rm`. The `journalctl --user` search checks that nothing the Operator Verifier prints lands there.
 
+A search that finds nothing proves something only if it works. `evals.sh` first checks that the same search finds the canary where it belongs, in the workload's own log, through `kubectl` and on the node's disk. It then reports how many lines it searched on each surface, so an empty source can't pass unnoticed.
+
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-scripted` on `f629a3a`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals.sh`: **pass**.
+  - The run sealed a random canary, then exercised both error paths, an unlock, a workload fetch and a Trustee container restart.
+  - The positive controls found the canary in the workload's log.
+  - No surface held the canary, a Share, a key body or an age identity. Lines searched:
+
+    | Surface | Lines searched |
+    |---|---|
+    | Kubernetes objects and events | 24,154 |
+    | Container logs, except the workload's own | 5,017 |
+    | The node's journal | 41,784 |
+    | `approve` output and audit records | 42 |
+    | `status` responses | 30 |
+    | The operators' user journal | 51,334 |
+    | The node's file system | not counted: a file search |
+    | The operators' runtime directory and podman storage | not counted: a file search |
+
+  - Guest memory was out of scope on swtpm.

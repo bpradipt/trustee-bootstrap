@@ -10,7 +10,7 @@ A cluster that refuses everything passes every negative eval. The healthy-path e
 
 | # | Eval | Category | Runs on | Last result |
 |---|---|---|---|---|
-| EV-01 | [Host swaps the Sealed Bundle in a live pod](01-host-swaps-bundle-in-pod.md) | hostile host | kind + swtpm | not run |
+| EV-01 | [Host swaps the Sealed Bundle in a live pod](01-host-swaps-bundle-in-pod.md) | hostile host | `evals.sh` | pass, 2026-11-12 |
 | EV-02 | [Host splices one approval into several CVMs](02-host-splices-one-approval.md) | hostile host | kind + swtpm | not run |
 | EV-03 | [Host ignores a withdrawal](03-host-ignores-a-withdrawal.md) | hostile host | kind + swtpm | not run |
 | EV-04 | [Impostor Trustee serves workloads](04-impostor-trustee.md) | hostile host | kind + swtpm | not run |
@@ -20,11 +20,11 @@ A cluster that refuses everything passes every negative eval. The healthy-path e
 | EV-08 | [Ceremonies leave no secret on disk](08-ceremonies-leave-no-secret.md) | operator mistake | scratch VM | not run |
 | EV-09 | [Upgrade the Bootstrap Helper and roll back](09-helper-upgrade-and-rollback.md) | upgrade | kind + swtpm | not run |
 | EV-10 | [Roster change locks out a departed operator](10-roster-change.md) | roster change | kind + swtpm, go test | not run |
-| EV-11 | [Pod recreation after unlock forgets everything](11-pod-recreation-after-unlock.md) | partial failure | kind + swtpm | not run |
+| EV-11 | [Pod recreation after unlock forgets everything](11-pod-recreation-after-unlock.md) | partial failure | `evals.sh` | pass, 2026-11-12 |
 | EV-12 | [`approve` killed with SIGKILL](12-approve-killed.md) | partial failure | operator workstation | not run |
 | EV-13 | [Relay cut after release](13-relay-cut-after-release.md) | partial failure | kind + swtpm | not run |
 | EV-14 | [Broken sealed resource policy](14-broken-sealed-policy.md) | partial failure | kind + swtpm | not run |
-| EV-15 | [Canary sweep after a full unlock](15-canary-sweep.md) | secret hygiene | kind + swtpm | not run |
+| EV-15 | [Canary sweep after a full unlock](15-canary-sweep.md) | secret hygiene | `evals.sh` | pass, 2026-11-12 |
 | EV-16 | [Deployed Trustee CVM waits for Shares](16-healthy-before-unlock.md) | healthy path | `golden-path.sh` | pass, 2026-11-12 |
 | EV-17 | [Two Security Operators unlock Trustee](17-healthy-unlock.md) | healthy path | `golden-path.sh` | pass, 2026-11-12 |
 | EV-18 | [A CoCo workload gets a key from the unlocked Trustee](18-healthy-workload-gets-key.md) | healthy path | `golden-path.sh` | pass, 2026-11-12 |
@@ -57,6 +57,17 @@ export E2E_ENGINE=podman
 test/e2e/kind-kata-swtpm.sh up         # once; about 25 min cold, 6 min warm
 test/e2e/golden-path.sh >transcript.txt
 ```
+
+### Scripted negative evals
+
+`test/e2e/evals.sh` runs EV-01, EV-11 and EV-15 on the same cluster, after one shared setup. The sealed resource is a random canary, which EV-15 then searches for. Name evals to run fewer of them:
+
+```sh
+test/e2e/evals.sh              # EV-01, EV-11 and EV-15
+test/e2e/evals.sh ev01 ev15
+```
+
+It prints `PASS` and exits 0 only when every eval it ran passes.
 
 ### Walking the evals yourself
 
