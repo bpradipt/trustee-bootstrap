@@ -35,7 +35,7 @@ A PR that changes the tag finds no image and builds once. After the merge, the w
 **Spec:** §0 requirement 7 (pin every upstream version); `docs/ci.md`; `docs/upstream-pins.md`.
 
 - [x] With the image in the registry, `up` pulls it and builds nothing, and the swtpm e2e tests pass on the pulled files.
-- [ ] With no image for the tag, `up` builds the files as before, and `kind-kata-swtpm.sh publish` packs and pushes them.
+- [x] With no image for the tag, `up` builds the files as before, and `kind-kata-swtpm.sh publish` packs and pushes them.
 - [x] A changed pin changes the tag, and `up` replaces a local cache built for the old one.
 - [x] `test/supplychain` exempts only the e2e guest repository, and fails if `versions.yaml` and `docs/upstream-pins.md` disagree.
 - [ ] After the merge, the workflow publishes the image, and the package is public.
@@ -52,3 +52,5 @@ A PR that changes the tag finds no image and builds once. After the merge, the w
   - **supplychain.** It goes red on each of these: a pin missing from `docs/upstream-pins.md`, a quoted value, a KBS image that differs from `verifier.Image`, and a lookalike `…-e2e-guestx` reference.
   - `test/e2e/ci.sh go`, `test/e2e/ci.sh lint origin/main` and shellcheck exit 0.
 - **Not run: a cold build.** The VM had 2.5 GB free, too little for the kernel and the AA. The build code moved unchanged. ghcr.io has no image yet, so this PR's e2e job takes the build path and covers box 2.
+- **Cold build in CI**, PR run 43253675354, 2026-11-12. ghcr.io had no image for the tag, so `up` built everything itself: the kernel from 15:59 to 16:10, the AA until 16:18, then the extension and the kata-static files. `share-release.sh` passed on those files. In `trustee-cvm.sh`, so did AT-13's TPM-attested unlock and the policy checks.
+- **A race in that run.** AT-21 then failed with `connection refused` to Trustee's ClusterIP, 0.83 s after the pod turned Ready. kube-proxy routes a Service a moment after its pod turns Ready, and this runner reached the check sooner than the VM ever had. `check_host_attacks` now waits until the node can open a TCP connection to the Service.
