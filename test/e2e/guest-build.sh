@@ -12,7 +12,10 @@
 # sha256 of the files that decide what they hold. `up` pulls that tag, and
 # builds the files only when the registry doesn't have it.
 
+# CI sets E2E_GUEST_IMAGE under its own repository's owner, the only
+# namespace its token can push to. ghcr.io takes lowercase names only.
 GUEST_IMAGE=${E2E_GUEST_IMAGE:-ghcr.io/confidential-devhub/trustee-bootstrap-e2e-guest}
+GUEST_IMAGE=${GUEST_IMAGE,,}
 
 # guest_tag: the image tag for the current pins and build steps.
 guest_tag() {
@@ -53,8 +56,10 @@ publish() {
 		return
 	fi
 	guest
-	printf 'FROM %s\nLABEL org.opencontainers.image.source=https://github.com/confidential-devhub/trustee-bootstrap\nCOPY vmlinuz-tpm /e2e-guest/\nCOPY ext /e2e-guest/ext\nCOPY kata /e2e-guest/kata\n' \
-		"$PROBE_IMAGE" >"$E2E_CACHE/Containerfile.guest"
+	# The source label links the package to the repository that pushed it.
+	printf 'FROM %s\nLABEL org.opencontainers.image.source=%s/%s\nCOPY vmlinuz-tpm /e2e-guest/\nCOPY ext /e2e-guest/ext\nCOPY kata /e2e-guest/kata\n' \
+		"$PROBE_IMAGE" "${GITHUB_SERVER_URL:-https://github.com}" "${GITHUB_REPOSITORY:-confidential-devhub/trustee-bootstrap}" \
+		>"$E2E_CACHE/Containerfile.guest"
 	eng build -q -f "$E2E_CACHE/Containerfile.guest" -t "$ref" "$out" >/dev/null
 	eng push -q "$ref"
 	eng rmi "$ref" >/dev/null || true

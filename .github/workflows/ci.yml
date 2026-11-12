@@ -75,6 +75,9 @@ jobs:
     timeout-minutes: 90
     env:
       E2E_ENGINE: podman
+      # e2e-guest.yml publishes the image under this repository's owner. A
+      # pull request from a fork runs here too, so it pulls the same image.
+      E2E_GUEST_IMAGE: ghcr.io/${{ github.repository_owner }}/trustee-bootstrap-e2e-guest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

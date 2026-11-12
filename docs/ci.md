@@ -42,7 +42,7 @@ A workflow file can't block a merge. A repository admin must turn on branch prot
 
 ## The e2e guest image
 
-`.github/workflows/e2e-guest.yml` builds the guest artifacts that the e2e tests need and pushes them to `ghcr.io/confidential-devhub/trustee-bootstrap-e2e-guest`. The image holds:
+`.github/workflows/e2e-guest.yml` builds the guest artifacts that the e2e tests need and pushes them to `ghcr.io/<owner>/trustee-bootstrap-e2e-guest`, where `<owner>` owns the repository the workflow runs in. Its token can push nowhere else. The image holds:
 
 - the Kata guest kernel with TPM drivers;
 - the Attestation Agent built with the TPM attester, in its coco-extension image;
@@ -50,7 +50,7 @@ A workflow file can't block a merge. A repository admin must turn on branch prot
 
 The image tag is the sha256 of `versions.yaml`, `test/e2e/guest-build.sh` and `test/e2e/kernel-tpm.conf`. The workflow runs when one of them changes on `main`, and on demand (`workflow_dispatch`). It skips a tag that the registry already has, and runs `test/e2e/kind-kata-swtpm.sh publish`.
 
-`kind-kata-swtpm.sh up` pulls the tag for the current files. When the registry doesn't have that tag yet, as in a PR that changes a pin, `up` builds the artifacts itself. The build takes about 20 minutes on the kernel and the Attestation Agent. A stamp file in `$E2E_CACHE/out` records the tag, so a local cache built for other pins gets replaced. Set `E2E_GUEST_IMAGE` to pull from another repository.
+`kind-kata-swtpm.sh up` pulls the tag for the current files. When the registry doesn't have that tag yet, as in a PR that changes a pin, `up` builds the artifacts itself. The build takes about 20 minutes on the kernel and the Attestation Agent. A stamp file in `$E2E_CACHE/out` records the tag, so a local cache built for other pins gets replaced. Both workflows set `E2E_GUEST_IMAGE` to the owner's path. A local run defaults to `ghcr.io/confidential-devhub/trustee-bootstrap-e2e-guest`. Set `E2E_GUEST_IMAGE` to pull from elsewhere, such as `ghcr.io/bpradipt/trustee-bootstrap-e2e-guest`.
 
 `test/supplychain` lets this one repository go without a digest. Its tag already names its inputs, and only the `e2e-guest` workflow pushes it.
 
