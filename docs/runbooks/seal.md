@@ -43,10 +43,12 @@
    openssl req -x509 -new -key tree/as-signer.key -subj "/CN=Trustee AS signer" -days 365 -out tree/as-signer.crt
    openssl genpkey -algorithm ed25519 | openssl pkey -pubout -out tree/admin.pub
    ```
-5. Add the resource policy at its exact key, then the resources and reference values. A `/` in a resource path becomes the literal four characters `\x2F` in the file name:
+5. Add the resource policy at its exact key, then the resources and reference values. A `/` in a resource path becomes the literal four characters `\x2F` in the file name. Type each secret value at the `read -rs` prompt, never as `SECRET_VALUE=...` on the command line: the shell would show it and save it to its history file on disk.
    ```sh
    cp /path/to/resource-policy.rego tree/storage/kbs/resource-policy.rego
+   read -rs SECRET_VALUE    # type the value, then Enter; nothing echoes
    printf '%s' "$SECRET_VALUE" >'tree/storage/repository/default\x2Fapp\x2Fsecret'
+   unset SECRET_VALUE
    printf '{"version":"0.1.0","name":"%s","expiration":"%s","value":%s}' \
      trusted_aks "$(date -u -d '+1 year' +%Y-%m-%dT%H:%M:%SZ)" '["<AK PEM body>"]' >tree/storage/reference_value/trusted_aks
    ```
@@ -75,6 +77,7 @@ The witness confirms, and signs the record of:
 - the swap, backup and network checks before step 1;
 - step 2: `kbs.toml` is the release file, or its diff from that file keeps the four settings;
 - step 3: `openssl x509 -in tree/tls.crt -noout -ext subjectAltName,basicConstraints` shows only the cluster-internal name and `CA:FALSE`;
+- step 5: every secret went in through `read -rs`: `history | grep SECRET_VALUE` shows only the `read`, `printf` and `unset` lines;
 - step 6: `seal` exited 0 and printed one 64-character hex digest;
 - step 7: `sha256sum` printed the same digest, and the size is at most 1048576;
 - step 8: `mount | grep /mnt/seal` prints nothing, and the outbox holds only `bundle.age` and `tls.crt`;
