@@ -14,7 +14,7 @@
 
 1. Alice and Carol follow withdraw-approval.md steps 1 to 4. Step 4 shows them the forged status.
 2. Carol runs `approve` with her policy for B.
-3. Read the old pod's real status through `kubectl port-forward` to the pod.
+3. Read the old pod's real status from the kind node, at the pod IP: `curl http://<pod-ip>:8090/bootstrap/v1/status`. `kubectl port-forward` can't reach a pod whose init container still runs.
 4. Bob runs `approve` with his policy for A.
 
 ## Expected

@@ -91,7 +91,7 @@ All formats are owned by one Go module in this repo (ADR 0001, ADR 0006).
 | `GET /bootstrap/v1/status` | Returns `{boot_id, key_id, state, threshold, accepted:[index…], rejected:[index…]}`. Contains no secrets. Rate-limited: 10 requests a second from all clients together, `429` beyond. |
 | `GET /bootstrap/v1/relay` | WebSocket upgrade. Only one relay may be open at a time; a second request gets `409`. Unauthenticated: squatting the relay is a DoS, which is out of scope (ADR 0003). |
 
-`boot_id` is 128 random bits drawn when the Bootstrap Helper starts. It is used only to correlate status and audit records. TLS in front of the Bootstrap Helper (Ingress, LoadBalancer, port-forward) is allowed, but it is not a security boundary. The CLI accepts both `http://` and `https://`. To go through `kubectl port-forward`, run it yourself and pass the local URL as `--endpoint`.
+`boot_id` is 128 random bits drawn when the Bootstrap Helper starts. It is used only to correlate status and audit records. Security Operators reach the helper through its Service: a NodePort, as in the example pod, a LoadBalancer, or an Ingress that passes WebSocket upgrades. TLS in front of the Bootstrap Helper is allowed, but it is not a security boundary. The CLI accepts both `http://` and `https://`. `kubectl port-forward` can't reach the helper: kubectl refuses a pod in phase `Pending`, and the pod stays `Pending` while its init container runs.
 
 ### One operator's flow
 

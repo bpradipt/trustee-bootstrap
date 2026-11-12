@@ -28,7 +28,7 @@
         <mxCell id="infra" value="&lt;b&gt;Untrusted&lt;/b&gt;&lt;br&gt;Kubernetes, host, network" style="rounded=1;arcSize=3;dashed=1;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#f5f5f5;strokeColor=#b85450;" vertex="1" parent="1">
           <mxGeometry x="430" y="70" width="200" height="530" as="geometry"/>
         </mxCell>
-        <mxCell id="svc" value="Service / Ingress /&lt;br&gt;port-forward&lt;br&gt;(plain HTTP is fine)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+        <mxCell id="svc" value="NodePort, LoadBalancer&lt;br&gt;or Ingress&lt;br&gt;(plain HTTP is fine)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="450" y="190" width="160" height="60" as="geometry"/>
         </mxCell>
         <mxCell id="cms" value="&lt;b&gt;ConfigMaps&lt;/b&gt;&lt;br&gt;ceremony.json&lt;br&gt;Sealed Bundle" style="shape=cylinder3;boundedLbl=1;size=8;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
