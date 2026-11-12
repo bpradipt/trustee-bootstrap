@@ -16,8 +16,8 @@ A cluster that refuses everything passes every negative eval. The healthy-path e
 | EV-04 | [Impostor Trustee serves workloads](04-impostor-trustee.md) | hostile host | kind + swtpm | not run |
 | EV-05 | [Security Operator reviews a weakened Init-Data](05-weakened-init-data-review.md) | operator mistake | genpolicy only | not run |
 | EV-06 | [Runbook error paths match the CLI](06-runbook-error-paths.md) | operator mistake | kind + swtpm | not run |
-| EV-07 | [Seal with a public or CA certificate](07-seal-with-public-certificate.md) | operator mistake | sealing machine | pass, 2026-11-12 |
-| EV-08 | [Ceremonies leave no secret on disk](08-ceremonies-leave-no-secret.md) | operator mistake | scratch VM | not run |
+| EV-07 | [Seal with a public or CA certificate](07-seal-with-public-certificate.md) | operator mistake | `evals-offline.sh` | pass, 2026-11-12 |
+| EV-08 | [Ceremonies leave no secret on disk](08-ceremonies-leave-no-secret.md) | operator mistake | `evals-offline.sh` | pass, 2026-11-12 |
 | EV-09 | [Upgrade the Bootstrap Helper and roll back](09-helper-upgrade-and-rollback.md) | upgrade | kind + swtpm | not run |
 | EV-10 | [Roster change locks out a departed operator](10-roster-change.md) | roster change | kind + swtpm, go test | not run |
 | EV-11 | [Pod recreation after unlock forgets everything](11-pod-recreation-after-unlock.md) | partial failure | `evals.sh` | pass, 2026-11-12 |
@@ -68,6 +68,13 @@ test/e2e/evals.sh ev01 ev15
 ```
 
 It prints `PASS` and exits 0 only when every eval it ran passes.
+
+`test/e2e/evals-offline.sh` runs the evals that need no cluster, EV-07 and EV-08. It needs Go, `openssl`, `jq` and passwordless `sudo`. EV-08 mounts tmpfs at `/mnt/ceremony` and `/mnt/seal` and searches the whole root file system, so run it on a scratch machine:
+
+```sh
+test/e2e/evals-offline.sh              # EV-07 and EV-08
+test/e2e/evals-offline.sh ev07
+```
 
 ### Walking the evals yourself
 
