@@ -1,0 +1,34 @@
+# The pins that the e2e scripts use. docs/upstream-pins.md gives the source
+# and the reason for each, and test/supplychain fails if the two disagree.
+# Keep one bare "key: value" per line: test/e2e/kind-kata-swtpm.sh reads it
+# with awk. A change here also changes the e2e guest image's tag
+# (test/e2e/guest-build.sh), so the next run builds a new one.
+
+# Kata Containers 4.2.0
+kata_tag: 4.2.0
+kata_commit: c7351e797efff8bfc6bd73da0eb1909be12e2cfe
+kata_static_sha256: b828904fa3f1e49ddd7dc799c72cb1503cd1e772d354c3987c8d4189b2a623a8
+kata_tools_sha256: a4f8e1b6ee500b6e94d3925249e741c75bb4a89bf275b5d5066d6275c68e29ef
+# Kata 4.2.0 versions.yaml: assets.kernel.version
+kernel_version: 6.18.35
+
+# guest-components v0.22.0, and the Rust in its rust-toolchain.toml
+gc_tag: v0.22.0
+gc_commit: eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a
+coco_extension_image: ghcr.io/confidential-containers/guest-components/coco-extension:eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a-ubuntu26.04@sha256:e10ac1d0b915100f8212bb0be4f28669ac80588b3ba922c4580a36d23c5fb47a
+rust_toolchain: 1.95.0
+# The same Ubuntu release as the Kata 4.2.0 guest rootfs (resolute)
+builder_image: docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
+
+# Trustee v0.22.0
+kbs_image: ghcr.io/confidential-containers/key-broker-service:built-in-as-v0.22.0@sha256:c1960cb4df0b1bdc0e4309f97dc65b0a1a777a92dabb2211acb45542f906c625
+
+# The kind cluster
+kind_version: v0.33.0
+kind_sha256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+kind_node_image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+
+# Pulled in the pod VM by the probes, and the e2e guest image's base
+probe_image: docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+# Serves the helper image to the kind node and the guest (trustee-cvm.sh)
+registry_image: docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e

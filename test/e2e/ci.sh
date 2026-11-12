@@ -18,8 +18,9 @@
 #                     e2e=true otherwise
 #
 # e2e needs what kind-kata-swtpm.sh needs: /dev/kvm, sudo, apt-get, rootful
-# podman, about 8 GB of disk and network access. A cold run builds for about
-# 20 minutes; the build outputs are in $E2E_CACHE/out.
+# podman, about 8 GB of disk and network access. `up` pulls the e2e guest
+# image (guest-build.sh) into $E2E_CACHE/out. Without that image for the
+# current pins, it builds the guest artifacts for about 20 minutes.
 set -euo pipefail
 
 e2e=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

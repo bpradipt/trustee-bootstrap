@@ -1,0 +1,47 @@
+# Builds the e2e guest artifacts (the Kata guest kernel with TPM drivers, the
+# AA with the TPM attester, its coco-extension image and the kata-static
+# files) and pushes them as one image to ghcr.io. Its tag hashes the files
+# below, so it runs only when one of them changes. The ci workflow's e2e job
+# pulls the image. test/e2e/guest-build.sh has the details.
+name: e2e-guest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - versions.yaml
+      - test/e2e/guest-build.sh
+      - test/e2e/kernel-tpm.conf
+      - .github/workflows/e2e-guest.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-guest
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      E2E_ENGINE: podman
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # build_deps installs the build tools with apt-get.
+      - name: Prepare the runner
+        run: sudo apt-get update -qq
+      # The engine runs as root (kind-kata-swtpm.sh eng), so root logs in.
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$TOKEN" | sudo env -u XDG_RUNTIME_DIR podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and push the e2e guest image
+        run: test/e2e/kind-kata-swtpm.sh publish

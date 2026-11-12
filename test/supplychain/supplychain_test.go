@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 // root is the repository root, from this package's directory.
@@ -102,12 +104,21 @@ var (
 	fullSHA  = regexp.MustCompile(`@[0-9a-f]{40}$`)
 )
 
+// e2eGuest is the one image pulled by tag, not digest. Its tag is the sha256
+// of the files that build it (test/e2e/guest-build.sh), and only the
+// e2e-guest workflow pushes it.
+const e2eGuest = "ghcr.io/confidential-devhub/trustee-bootstrap-e2e-guest"
+
+func isE2EGuest(ref string) bool {
+	return ref == e2eGuest || strings.HasPrefix(ref, e2eGuest+":")
+}
+
 // Every container image is pinned by digest and every CI action by commit
 // SHA, in the code, scripts, manifests and workflows.
 func TestImagesAndActionsArePinned(t *testing.T) {
 	for path, body := range sources(t) {
 		for _, ref := range imageRef.FindAllString(body, -1) {
-			if !pinned.MatchString(ref) {
+			if !pinned.MatchString(ref) && !isE2EGuest(ref) {
 				t.Errorf("%s: image %s is not pinned by digest", path, ref)
 			}
 		}
@@ -142,6 +153,75 @@ func TestPinCheckCatchesUnpinnedReferences(t *testing.T) {
 	if fullSHA.MatchString("actions/checkout@v7") {
 		t.Error("an action tag passes as pinned")
 	}
+}
+
+// Only the e2e guest repository itself escapes the digest rule.
+func TestE2EGuestExemption(t *testing.T) {
+	for ref, want := range map[string]bool{
+		e2eGuest:               true,
+		e2eGuest + ":0123abcd": true,
+		e2eGuest + "x:v1":      false,
+		e2eGuest + "/other:v1": false,
+		"ghcr" + ".io/other/trustee-bootstrap-e2e-guest:v1": false,
+	} {
+		if got := isE2EGuest(ref); got != want {
+			t.Errorf("isE2EGuest(%s) = %v, want %v", ref, got, want)
+		}
+	}
+}
+
+// versions.yaml holds the values the e2e scripts use, and
+// docs/upstream-pins.md gives the source of each. Every value appears in the
+// doc (an image by its digest), and the CLI's Operator Verifier runs the KBS
+// image that the e2e tests run.
+func TestVersionsMatchUpstreamPins(t *testing.T) {
+	versions := readVersions(t)
+	doc := readFile(t, "docs/upstream-pins.md")
+	for key, value := range versions {
+		want := value
+		if _, digest, ok := strings.Cut(value, "@"); ok {
+			want = digest
+		}
+		if !strings.Contains(doc, want) {
+			t.Errorf("versions.yaml %s: %s is not in docs/upstream-pins.md", key, want)
+		}
+	}
+	if versions["kbs_image"] != verifier.Image {
+		t.Errorf("versions.yaml kbs_image is %s, verifier.Image is %s", versions["kbs_image"], verifier.Image)
+	}
+}
+
+// readVersions parses versions.yaml as the scripts' awk reader does: comment
+// lines, blank lines, and one bare "key: value" per line.
+func readVersions(t *testing.T) map[string]string {
+	t.Helper()
+	versions := map[string]string{}
+	for i, line := range strings.Split(readFile(t, "versions.yaml"), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, ": ")
+		if !ok || value == "" || strings.ContainsAny(key+value, " \t\"'#") {
+			t.Fatalf("versions.yaml:%d: want a bare \"key: value\", got %q", i+1, line)
+		}
+		if _, dup := versions[key]; dup {
+			t.Fatalf("versions.yaml:%d: %s appears twice", i+1, key)
+		}
+		versions[key] = value
+	}
+	if len(versions) < 10 {
+		t.Fatalf("read %d pins from versions.yaml; the parse missed them", len(versions))
+	}
+	return versions
+}
+
+func readFile(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 // sources reads the files that can name an image or an action.

@@ -2,35 +2,45 @@
 # kind + Kata (qemu-coco-dev, runtime-rs) + swtpm. The guest Attestation
 # Agent uses the TPM attester, backed by one swtpm per pod VM.
 #
-#   kind-kata-swtpm.sh up       build what is missing, create the cluster
+#   kind-kata-swtpm.sh up       get the guest artifacts, create the cluster
 #   kind-kata-swtpm.sh verify   run the pinned KBS and a test pod, check
 #                               that TPM evidence is accepted and that PCR8
 #                               holds the Init-Data digest
 #   kind-kata-swtpm.sh down     delete the cluster and stop the KBS
+#   kind-kata-swtpm.sh publish  build and push the e2e guest image, unless
+#                               the registry has it (guest-build.sh)
 #
 # Every step is idempotent. Built artifacts are cached in $E2E_CACHE.
-# Versions come from docs/upstream-pins.md.
+# Versions come from versions.yaml; docs/upstream-pins.md says why.
 set -euo pipefail
 
-# --- pins (docs/upstream-pins.md) -------------------------------------------
-KATA_TAG=4.2.0
-KATA_COMMIT=c7351e797efff8bfc6bd73da0eb1909be12e2cfe
-KATA_STATIC_SHA256=b828904fa3f1e49ddd7dc799c72cb1503cd1e772d354c3987c8d4189b2a623a8
-# Kata 4.2.0 versions.yaml: assets.kernel.version
-KERNEL_VERSION=6.18.35
-GC_TAG=v0.22.0
-GC_COMMIT=eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a
-COCO_EXTENSION_IMAGE=ghcr.io/confidential-containers/guest-components/coco-extension:eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a-ubuntu26.04@sha256:e10ac1d0b915100f8212bb0be4f28669ac80588b3ba922c4580a36d23c5fb47a
-KBS_IMAGE=ghcr.io/confidential-containers/key-broker-service:built-in-as-v0.22.0@sha256:c1960cb4df0b1bdc0e4309f97dc65b0a1a777a92dabb2211acb45542f906c625
-KIND_VERSION=v0.33.0
-KIND_SHA256=aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
-KIND_NODE_IMAGE=kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
-# Same Ubuntu release as the Kata 4.2.0 guest rootfs (resolute).
-BUILDER_IMAGE=docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
-# Pulled inside the pod VM by the verify probe.
-PROBE_IMAGE=docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
-# guest-components v0.22.0 rust-toolchain.toml
-RUST_TOOLCHAIN=1.95.0
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo=$(cd "$script_dir/../.." && pwd)
+
+info() { echo "[kind-kata-swtpm] $*" >&2; }
+die() { echo "[kind-kata-swtpm] ERROR: $*" >&2; exit 1; }
+
+# pin <key>: a value from versions.yaml.
+pin() {
+	awk -v k="$1:" '$1 == k { print $2; found = 1 } END { exit !found }' "$repo/versions.yaml" ||
+		die "versions.yaml has no $1"
+}
+
+# --- pins (versions.yaml) ----------------------------------------------------
+KATA_TAG=$(pin kata_tag)
+KATA_COMMIT=$(pin kata_commit)
+KATA_STATIC_SHA256=$(pin kata_static_sha256)
+KERNEL_VERSION=$(pin kernel_version)
+GC_TAG=$(pin gc_tag)
+GC_COMMIT=$(pin gc_commit)
+COCO_EXTENSION_IMAGE=$(pin coco_extension_image)
+KBS_IMAGE=$(pin kbs_image)
+KIND_VERSION=$(pin kind_version)
+KIND_SHA256=$(pin kind_sha256)
+KIND_NODE_IMAGE=$(pin kind_node_image)
+BUILDER_IMAGE=$(pin builder_image)
+PROBE_IMAGE=$(pin probe_image)
+RUST_TOOLCHAIN=$(pin rust_toolchain)
 
 # --- knobs -------------------------------------------------------------------
 CLUSTER=${E2E_CLUSTER:-trustee-bootstrap}
@@ -39,12 +49,8 @@ GUEST_MEMORY_MB=${E2E_GUEST_MEMORY_MB:-1024}
 RUNTIME_CLASS=kata-qemu-coco-dev-tpm
 ENGINE=${E2E_ENGINE:-$(command -v docker >/dev/null && echo docker || echo podman)}
 
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 src=$E2E_CACHE/src
 out=$E2E_CACHE/out
-
-info() { echo "[kind-kata-swtpm] $*" >&2; }
-die() { echo "[kind-kata-swtpm] ERROR: $*" >&2; exit 1; }
 
 # Root for the container engine. kind needs a rootful engine for /dev/kvm.
 # rootsudo drops XDG_RUNTIME_DIR: where sudo keeps it (GitHub runners),
@@ -54,112 +60,16 @@ rootsudo() { sudo env -u XDG_RUNTIME_DIR "$@"; }
 eng() { if [[ $ENGINE == podman ]]; then rootsudo podman "$@"; else docker "$@"; fi; }
 node() { eng exec -i "$CLUSTER-control-plane" "$@"; }
 
-# clone_at <url> <tag> <commit> <dir> [sparse paths...]
-clone_at() {
-	local url=$1 tag=$2 commit=$3 dir=$4
-	shift 4
-	if [[ ! -d $dir/.git ]]; then
-		git clone -q --depth 1 --branch "$tag" --filter=blob:none ${1:+--sparse} "$url" "$dir" 2>/dev/null
-		[[ $# -eq 0 ]] || git -C "$dir" sparse-checkout set --skip-checks "$@"
-	fi
-	[[ $(git -C "$dir" rev-parse HEAD) == "$commit" ]] || die "$dir is not at $commit"
-}
+# shellcheck source=guest-build.sh
+source "$script_dir/guest-build.sh"
 
 host_deps() {
-	command -v apt-get >/dev/null || die "install the build tools by hand (see host_deps)"
+	command -v apt-get >/dev/null || die "install curl, kmod, patch, python3 and zstd by hand (see host_deps)"
 	sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-		bc bison build-essential cpio cryptsetup-bin curl erofs-utils flex git kmod \
-		libelf-dev libssl-dev parted patch python3 rsync zstd >/dev/null
+		curl kmod patch python3 zstd >/dev/null
 	# The pod VM needs vsock and vhost-net from the host kernel.
 	sudo modprobe -a vhost_vsock vhost_net tun
 	[[ -e /dev/kvm ]] || die "no /dev/kvm: the pod VMs need KVM (nested virtualization in a VM)"
-}
-
-# The Kata 4.2.0 guest kernel has no TPM driver. Rebuild it with Kata's own
-# build-kernel.sh and fragments (same flags as kata-deploy-binaries.sh
-# install_kernel on x86_64), plus kernel-tpm.conf.
-build_kernel() {
-	[[ -f $out/vmlinuz-tpm ]] && return
-	info "building the Kata guest kernel with TPM drivers"
-	clone_at https://github.com/kata-containers/kata-containers "$KATA_TAG" "$KATA_COMMIT" \
-		"$src/kata" tools/packaging/kernel tools/packaging/scripts
-	cp "$script_dir/kernel-tpm.conf" "$src/kata/tools/packaging/kernel/configs/fragments/x86_64/tpm.conf"
-	local b=$E2E_CACHE/kernel-build kb="$src/kata/tools/packaging/kernel/build-kernel.sh"
-	local args=(-a x86_64 -v "$KERNEL_VERSION" -u https://cdn.kernel.org/pub/linux/kernel/v6.x/ -x -m)
-	mkdir -p "$b" "$out"
-	(cd "$b" && "$kb" "${args[@]}" -f setup && "$kb" "${args[@]}" build)
-	grep -q '^CONFIG_TCG_CRB=y' "$b"/kata-linux-*/.config || die "TPM drivers missing from kernel config"
-	cp "$b"/kata-linux-*/arch/x86/boot/bzImage "$out/vmlinuz-tpm"
-	rm -rf "$b"
-}
-
-# The stock coco-extension AA is built with snp and tdx attesters only. Build
-# the pinned AA with tpm-attester on the guest's Ubuntu release, and keep its
-# non-glibc libraries (tss2, openssl) next to it, as assemble-rootfs.sh does
-# for the NVIDIA variant. Everything except the outputs stays in the
-# container.
-build_aa() {
-	[[ -f $out/aa/attestation-agent ]] && return
-	info "building attestation-agent with tpm-attester"
-	clone_at https://github.com/confidential-containers/guest-components "$GC_TAG" "$GC_COMMIT" "$src/gc"
-	mkdir -p "$out/aa"
-	# shellcheck disable=SC2016 # expands in the container
-	eng run --rm -v "$src/gc:/src:ro" -v "$out/aa:/out" -e RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
-		-e OWNER="$(id -u):$(id -g)" "$BUILDER_IMAGE" bash -euo pipefail -c '
-		export DEBIAN_FRONTEND=noninteractive PATH=/root/.cargo/bin:$PATH
-		apt-get update -qq
-		apt-get install -y -qq --no-install-recommends ca-certificates clang cmake curl g++ gcc \
-			libclang-dev libssl-dev libtss2-dev make perl pkg-config protobuf-compiler >/dev/null
-		curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
-		cp -a /src /build
-		make -C /build/attestation-agent ttrpc=true ATTESTER=tpm-attester
-		aa=/build/target/x86_64-unknown-linux-gnu/release/attestation-agent
-		strip "$aa"
-		install -D -m0755 "$aa" /out/attestation-agent
-		{ ldd "$aa"; echo "/usr/lib/x86_64-linux-gnu/libtss2-tcti-device.so.0 x"; } |
-			grep -o "/[^ ]*" | while read -r lib; do
-				case ${lib##*/} in ld-linux-* | libc.so.* | libdl.so.* | libm.so.* | libpthread.so.* | librt.so.*) continue ;; esac
-				install -D -m0755 "$lib" "/out/lib/${lib##*/}"
-			done
-		chown -R "$OWNER" /out'
-	eng rmi "$BUILDER_IMAGE" >/dev/null || true
-}
-
-# The pinned coco-extension payload with the AA swapped for build_aa's, packed
-# into a dm-verity extension image by guest-components' own script.
-build_extension() {
-	[[ -f $out/ext/kata-containers-coco-extension.img ]] && return
-	build_aa
-	info "building the coco extension image with the tpm AA"
-	local root=$E2E_CACHE/ext-rootfs c
-	sudo rm -rf "$root" && mkdir -p "$root"
-	c=$(eng create "$COCO_EXTENSION_IMAGE" /x)
-	eng export "$c" | sudo tar -x -C "$root"
-	eng rm "$c" >/dev/null
-	eng rmi "$COCO_EXTENSION_IMAGE" >/dev/null || true
-	sudo install -m0755 "$out/aa/attestation-agent" "$root/usr/local/bin/attestation-agent"
-	sudo install -m0755 -D -t "$root/usr/local/lib" "$out/aa/lib/"*
-	local manifest=$root/etc/kata-extensions/components.toml
-	grep -q '^  path = "usr/local/bin/attestation-agent"$' "$manifest" || die "unexpected $manifest"
-	sudo sed -i '/^  path = "usr\/local\/bin\/attestation-agent"$/a\  env  = { LD_LIBRARY_PATH = "${extension_root}/usr/local/lib" }' "$manifest"
-	ROOTFS_DIR=$root OUTPUT_DIR=$out/ext "$src/gc/tools/coco-extension/build-erofs-image.sh"
-	sudo rm -rf "$root"
-}
-
-# Only the runtime-rs shim, the base guest image and the coco-dev config come
-# from the pinned kata-static tarball; its QEMU is built without TPM support.
-build_kata() {
-	[[ -f $out/kata/containerd-shim-kata-v2 ]] && return
-	info "extracting Kata $KATA_TAG"
-	local tarball=$E2E_CACHE/kata-static-$KATA_TAG-amd64.tar.zst
-	curl -fsSLo "$tarball" "https://github.com/kata-containers/kata-containers/releases/download/$KATA_TAG/kata-static-$KATA_TAG-amd64.tar.zst"
-	echo "$KATA_STATIC_SHA256  $tarball" | sha256sum -c --quiet
-	mkdir -p "$out/kata"
-	tar --zstd -xf "$tarball" -C "$out/kata" --transform='s|.*/||' \
-		./opt/kata/share/kata-containers/kata-ubuntu-resolute.image \
-		./opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-coco-dev-runtime-rs.toml \
-		./opt/kata/runtime-rs/bin/containerd-shim-kata-v2
-	rm -f "$tarball"
 }
 
 kind() {
@@ -411,9 +321,7 @@ verify() {
 
 up() {
 	host_deps
-	build_kernel
-	build_extension
-	build_kata
+	guest
 	install_cluster
 	install_kata
 	info "ready: runtimeClassName: $RUNTIME_CLASS"
@@ -429,9 +337,10 @@ main() {
 	up) up ;;
 	verify) verify ;;
 	down) down ;;
-	# Single steps, for debugging: build_kernel, build_aa, ...
-	build_* | install_* | provision_*) "$1" ;;
-	*) die "usage: $0 up|verify|down" ;;
+	publish) publish ;;
+	# Single steps, for debugging: guest, build_kernel, build_aa, ...
+	guest | build_* | install_* | provision_*) "$1" ;;
+	*) die "usage: $0 up|verify|down|publish" ;;
 	esac
 }
 

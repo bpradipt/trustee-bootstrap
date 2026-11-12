@@ -41,11 +41,10 @@ source "$script_dir/operators.sh"
 info() { echo "[trustee-cvm] $*" >&2; }
 die() { echo "[trustee-cvm] FAIL: $*" >&2; exit 1; }
 
-# --- pins (docs/upstream-pins.md) -------------------------------------------
-KATA_TOOLS_SHA256=a4f8e1b6ee500b6e94d3925249e741c75bb4a89bf275b5d5066d6275c68e29ef
-REGISTRY_IMAGE=docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
+# --- pins (versions.yaml) ----------------------------------------------------
+KATA_TOOLS_SHA256=$(pin kata_tools_sha256)
+REGISTRY_IMAGE=$(pin registry_image)
 
-repo=$(cd "$script_dir/../.." && pwd)
 examples=$repo/deploy/examples
 work=${E2E_WORK:-$(mktemp -d)}
 mkdir -p "$work"
