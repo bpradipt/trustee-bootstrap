@@ -104,6 +104,7 @@ Each claim, invariant and residual risk in `SECURITY_THREAT_MODEL.md`, the tests
 | The Infrastructure Operator sees the plaintext | The seal runbook only | Nobody has checked the runbook for leaks | EV-08 |
 | Claim profiles cover only what was tested | `policy build` refuses untested profiles (ticket 14) | Real-TEE run | ticket 17 |
 | Released Shares are irrevocable for a live boot | Withdraw runbook, walked with an honest host (ticket 16) | A host that ignores the withdrawal | EV-03 |
+| An approval covers a configuration, not one VM | Documented 2026-11-12; nothing limits the count | Up to 4 CVMs per `approve` run, untested | EV-02 |
 | Availability | ADR 0002 | Pod recreation after unlock | EV-11 |
 | Roster change | Runbook, never walked as a whole (ticket 16) | The whole runbook, and a departed operator | EV-10 |
 | TPM/swtpm gives no confidentiality | `policy build` flag (ticket 14) | | |

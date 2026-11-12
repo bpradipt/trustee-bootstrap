@@ -119,7 +119,7 @@ Today no claim profile has passed a real-TEE run (`docs/claim-profiles.md`), so 
    ```sh
    trustee-bootstrap approve --endpoint "$ENDPOINT" --policy ~/trustee-policy --share-file alice.share 2>>approve-audit.log
    ```
-   It prints `accepted` once the helper accepted your Share. That does not mean Trustee runs yet.
+   It prints `accepted` once the helper accepted your Share. That does not mean Trustee runs yet. Nor does it mean one CVM: a host that holds the relay can pass your Share to up to four CVMs that run the same approved Init-Data and bundle (`SECURITY_THREAT_MODEL.md`, residual risks).
 3. Check again:
    ```sh
    trustee-bootstrap status --endpoint "$ENDPOINT"
