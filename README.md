@@ -25,7 +25,7 @@ Nothing on the host ever sees a Share, the key or the plaintext config. [`SECURI
 | A Security Operator | [Unlock Ceremony runbook](docs/runbooks/unlock-ceremony.md), [withdrawing an approval](docs/runbooks/withdraw-approval.md), [claim profiles](docs/claim-profiles.md) |
 | The Ceremony Authority | [Key Ceremony runbook](docs/runbooks/key-ceremony.md), [roster change](docs/runbooks/roster-change.md) |
 | The Infrastructure Operator | [sealing runbook](docs/runbooks/seal.md), [Trustee upgrade](docs/runbooks/trustee-upgrade.md), the example pod in [`deploy/examples/`](deploy/examples/) |
-| A reviewer | [`SECURITY_THREAT_MODEL.md`](SECURITY_THREAT_MODEL.md), then the [tickets](docs/tickets/README.md): each one records what ran and what it deferred |
+| A reviewer | [`SECURITY_THREAT_MODEL.md`](SECURITY_THREAT_MODEL.md), then the [tickets](docs/tickets/README.md): each one records what ran and what it deferred. The [evals](docs/evals/README.md) test the threat model's claims against operator mistakes and a hostile host |
 | A contributor | [`AGENTS.md`](AGENTS.md), [`docs/ci.md`](docs/ci.md), the [tickets](docs/tickets/README.md) |
 
 ## Build and test
@@ -64,5 +64,5 @@ pkg/relay/               relay framing and limits
 pkg/helper/              Bootstrap Helper state machine and API
 deploy/examples/         example Trustee CVM pod, Init-Data and Trustee config
 test/e2e/                kind + Kata + swtpm environment and the end-to-end tests
-docs/                    ADRs, runbooks, tickets, claim profiles, pins, CI
+docs/                    ADRs, runbooks, tickets, evals, claim profiles, pins, CI
 ```
