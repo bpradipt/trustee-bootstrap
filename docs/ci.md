@@ -38,7 +38,23 @@ A workflow file can't block a merge. A repository admin must turn on branch prot
 ## Runner and cache
 
 - **Runner.** The `e2e` job needs `/dev/kvm`. GitHub-hosted `ubuntu-24.04` runners have it, and the job opens it to the runner user with a udev rule. A self-hosted runner needs nested virtualization, rootful podman, `sudo`, `apt-get`, network access and about 8 GB of free disk.
-- **Cache.** A cold `e2e` run spends about 20 minutes on the guest kernel and the Attestation Agent. The job caches `~/.cache/trustee-bootstrap-e2e/out`, keyed on the scripts that hold the pins. A changed pin builds again from scratch.
+- **Guest artifacts.** `kind-kata-swtpm.sh up` pulls them from the e2e guest image, so the job builds nothing. See [The e2e guest image](#the-e2e-guest-image).
+
+## The e2e guest image
+
+`.github/workflows/e2e-guest.yml` builds the guest artifacts that the e2e tests need and pushes them to `ghcr.io/confidential-devhub/trustee-bootstrap-e2e-guest`. The image holds:
+
+- the Kata guest kernel with TPM drivers;
+- the Attestation Agent built with the TPM attester, in its coco-extension image;
+- the shim, guest image and config from the kata-static tarball.
+
+The image tag is the sha256 of `versions.yaml`, `test/e2e/guest-build.sh` and `test/e2e/kernel-tpm.conf`. The workflow runs when one of them changes on `main`, and on demand (`workflow_dispatch`). It skips a tag that the registry already has, and runs `test/e2e/kind-kata-swtpm.sh publish`.
+
+`kind-kata-swtpm.sh up` pulls the tag for the current files. When the registry doesn't have that tag yet, as in a PR that changes a pin, `up` builds the artifacts itself. The build takes about 20 minutes on the kernel and the Attestation Agent. A stamp file in `$E2E_CACHE/out` records the tag, so a local cache built for other pins gets replaced. Set `E2E_GUEST_IMAGE` to pull from another repository.
+
+`test/supplychain` lets this one repository go without a digest. Its tag already names its inputs, and only the `e2e-guest` workflow pushes it.
+
+The package must be public, so that pull requests, from forks too, can pull it without credentials. If the first push creates it private, an admin makes it public once, in the package's settings. Until then, every e2e run builds the artifacts itself.
 
 ## Adding a test
 

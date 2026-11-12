@@ -92,21 +92,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends tcpdump
           df -h / && free -g && nproc
-      # The scripts skip a build whose output exists, so a key must change
-      # whenever a pin does: no restore-keys fallback to an older output.
-      - id: cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/trustee-bootstrap-e2e/out
-          key: e2e-out-${{ hashFiles('test/e2e/kind-kata-swtpm.sh', 'test/e2e/kernel-tpm.conf', 'test/e2e/trustee-cvm.sh') }}
-      # ci.sh e2e runs `up` too; running it here first lets the cache be
-      # saved even when a test fails.
-      - name: Build the swtpm environment
+      # `up` pulls the e2e guest image for the current pins (e2e-guest.yml
+      # publishes it), and builds the files only when the registry doesn't
+      # have that tag yet: in a PR that changes a pin. ci.sh e2e runs `up`
+      # again, which then finds everything in place.
+      - name: Set up the swtpm environment
         run: test/e2e/kind-kata-swtpm.sh up
-      - if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/trustee-bootstrap-e2e/out
-          key: ${{ steps.cache.outputs.cache-primary-key }}
       - name: swtpm end-to-end tests
         run: test/e2e/ci.sh e2e

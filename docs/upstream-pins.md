@@ -4,6 +4,8 @@ Every ticket builds and tests against these versions. Cite this file, not `main`
 
 Checked on 2026-11-10 against the sources listed under each table.
 
+`versions.yaml` at the repo root holds the values that the e2e scripts read, and this file gives the source and the reason for each. `test/supplychain` fails if a value in `versions.yaml` is missing here, or if the KBS image in `pkg/verifier` differs from the one in `versions.yaml`.
+
 ## The set
 
 We pin the Confidential Containers **v0.23.0** release set. Its release notes name Kata Containers 4.2.0 with Trustee and guest-components v0.22.0, and CoCo tested that combination. CAA v0.23.0 builds its pod VM from the same three.
@@ -115,4 +117,4 @@ QEMU, swtpm and tpm2-tools come from the kind node's distribution packages. They
 
 ## Updating a pin
 
-Change the row, the source link and the check date in the same commit. If you move Kata, also move Trustee and guest-components to the commits that Kata's `versions.yaml` names.
+In the same commit, change the value in `versions.yaml` and, here, the row, the source link and the check date. A change to `versions.yaml` gives the e2e guest image a new tag (ticket 23). The PR's e2e run then builds the guest artifacts itself, once. After the merge, the `e2e-guest` workflow publishes the image. If you move Kata, also move Trustee and guest-components to the commits that Kata's `versions.yaml` names.
