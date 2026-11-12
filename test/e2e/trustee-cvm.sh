@@ -346,8 +346,15 @@ check_tmpfs() {
 # network (test/e2e/attacker). The forged token carries the claims the
 # sealed policy wants. check_workloads then shows that policy still rules.
 check_host_attacks() {
-	local url out
-	url=https://$(kc get service trustee -o jsonpath='{.spec.clusterIP}'):8080
+	local ip url out
+	ip=$(kc get service trustee -o jsonpath='{.spec.clusterIP}')
+	url=https://$ip:8080
+	# Ready doesn't mean routed: kube-proxy adds the Service's endpoint a
+	# moment after the pod turns Ready, and refuses connections until then.
+	for _ in $(seq 30); do
+		node bash -c "exec 3<>/dev/tcp/$ip/8080" 2>/dev/null && break
+		sleep 1
+	done
 	eng cp "$work/bin/attacker" "$CLUSTER-control-plane:/tmp/attacker"
 	for attack in forge admin; do
 		out=$(node /tmp/attacker -test.run '^TestAttack$' -test.v -attack "$attack" -kbs "$url" -resource "$SECRET" \
