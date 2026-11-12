@@ -39,9 +39,10 @@ Today no claim profile has passed a real-TEE run (`docs/claim-profiles.md`), so 
    cp deploy/examples/init-data.toml init-data.toml
    ```
    The helper hands the published tree to Trustee's UID and GID, pinned as `--owner-uid=0` and `--owner-gid=0`: the pinned KBS image runs as root. If your Trustee image runs as another user, change both args in your copy before step 4.
-4. Run genpolicy. It writes the Kata Agent policy into the Init-Data and puts the Init-Data into the pod's `cc_init_data` annotation:
+4. Patch genpolicy's rules, then run genpolicy. The patch adds a rule that pins each container's image: Kata 4.2.0's rules don't check the image a guest-pulled container runs (ticket 21). genpolicy writes the Kata Agent policy into the Init-Data and puts the Init-Data into the pod's `cc_init_data` annotation:
    ```sh
-   "$GP/genpolicy" -y trustee-cvm.yaml -p "$GP/rules.rego" -j "$GP" --initdata-path=init-data.toml
+   patch -o rules.rego "$GP/rules.rego" deploy/genpolicy/rules.rego.patch
+   "$GP/genpolicy" -y trustee-cvm.yaml -p rules.rego -j "$GP" --initdata-path=init-data.toml
    ```
 5. Extract the Init-Data TOML that the CVM will measure. Security Operators review this file, not `init-data.toml`, because genpolicy rewrites it:
    ```sh
@@ -84,6 +85,7 @@ Today no claim profile has passed a real-TEE run (`docs/claim-profiles.md`), so 
    grep -n '"ReadStreamRequest"' init.toml                  # false
    grep -n 'url = ' init.toml                                # http://127.0.0.1:8081 only
    grep -o '"io.kubernetes.cri.container-name": "[^"]*"' init.toml | sort -u   # bootstrap-helper and trustee, nothing else
+   grep -c trustee_bootstrap_allow_image init.toml           # not 0: the rule that pins each image
    ```
    Read the rest of the `policy.rego` entry as well. A hash proves only that every Security Operator saw the same file.
 2. Build your Operator Policy. It computes the Init-Data digest from the file you reviewed, and checks your Share against the Ceremony Manifest:

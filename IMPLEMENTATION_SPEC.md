@@ -179,8 +179,8 @@ This is one Cobra tree in `pkg/cli`, `NewTrusteeBootstrapCmd()`. `cococtl` mount
 ## 7. Kubernetes / CVM integration
 
 - **One CoCo pod.** The `bootstrap-helper` init container comes first, then the Trustee main container. Both images are pinned by `@sha256`.
-- **Init-Data.** The `aa.toml` and `cdh.toml` KBS URL is `http://127.0.0.1:<proxy port>`. The Kata Agent policy comes from genpolicy and pins:
-  - the images;
+- **Init-Data.** The `aa.toml` and `cdh.toml` KBS URL is `http://127.0.0.1:<proxy port>`. The Kata Agent policy comes from genpolicy, with its rules patched by `deploy/genpolicy/rules.rego.patch`, and pins:
+  - the images, by digest. Kata 4.2.0's own rules don't check which image a guest-pulled container runs, so the patch adds a rule: each container's image annotation, its `image_guest_pull` storage's `source`, and that storage's metadata must all name the image genpolicy recorded *(ticket 21)*;
   - the Bootstrap Helper's args, including `--manifest-sha256`;
   - the mounts;
   - denial of exec and of additional containers *(Phase 0 result: confirmed for genpolicy at Kata 4.2.0, ticket 06)*.
@@ -252,7 +252,7 @@ test/e2e/                # kind + Kata + swtpm, end to end
 | AT-01 | Existing `cococtl` commands | Unchanged |
 | AT-02 | `approve` running | Only a `127.0.0.1` listener on the operator machine; all remote connections outbound |
 | AT-03 | Genuine Trustee CVM, matching Operator Policy, Operator Verifier running with `insecure_header_jwk = false` and its per-run signer | Share released and accepted |
-| AT-04 | Different image digest, weakened agent policy or other Init-Data | No release |
+| AT-04 | Different image digest, weakened agent policy or other Init-Data; or, under the approved Init-Data, a helper or Trustee container from another image | No release; the swapped container never starts |
 | AT-05 | Replayed evidence or substituted `tee-pubkey` | No release |
 | AT-06 | Observer on host or relay | Cannot recover a Share |
 | AT-07 | Same index delivered twice | Counted once |

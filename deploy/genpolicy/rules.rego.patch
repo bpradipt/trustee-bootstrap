@@ -1,0 +1,59 @@
+--- a/rules.rego
++++ b/rules.rego
+@@ -110,6 +110,7 @@
+     p_oci.Root.Readonly == i_oci.Root.Readonly
+ 
+     allow_anno(p_container, i_oci)
++    trustee_bootstrap_allow_image(p_oci, i_oci, i_storages)
+ 
+     p_storages := p_container.storages
+     allow_by_anno(p_oci, i_oci, p_storages, i_storages)
+@@ -283,6 +284,48 @@
+     print("allow_anno_key_value 3: true")
+ }
+ 
++# trustee-bootstrap: pin each container's image (ticket 21). genpolicy
++# records the image, with its digest, in the io.kubernetes.cri.image-name
++# annotation of each container's policy data. With guest pull, Kata 4.2.0
++# checks neither that annotation's value nor the image that the
++# image_guest_pull storage names, so the host could start another image
++# under the same Init-Data. A workload container must name the recorded
++# image in its annotation, in the storage's source and in the storage's
++# metadata.
++trustee_bootstrap_allow_image(p_oci, i_oci, i_storages) if {
++    not policy_data.cluster_config.guest_pull
++}
++trustee_bootstrap_allow_image(p_oci, i_oci, i_storages) if {
++    policy_data.cluster_config.guest_pull
++    i_oci.Annotations["io.kubernetes.cri.container-type"] == "sandbox"
++}
++trustee_bootstrap_allow_image(p_oci, i_oci, i_storages) if {
++    policy_data.cluster_config.guest_pull
++    i_oci.Annotations["io.kubernetes.cri.container-type"] == "container"
++    p_image := p_oci.Annotations["io.kubernetes.cri.image-name"]
++    print("trustee_bootstrap_allow_image: p_image =", p_image)
++    i_oci.Annotations["io.kubernetes.cri.image-name"] == p_image
++    every i_storage in i_storages {
++        trustee_bootstrap_allow_storage_image(i_storage, p_image)
++    }
++    print("trustee_bootstrap_allow_image: true")
++}
++
++trustee_bootstrap_allow_storage_image(i_storage, p_image) if {
++    i_storage.driver != "image_guest_pull"
++}
++trustee_bootstrap_allow_storage_image(i_storage, p_image) if {
++    i_storage.driver == "image_guest_pull"
++    i_storage.source == p_image
++    # One option, image_guest_pull={"metadata":{...}}, whose image-name
++    # appears once and is the recorded image.
++    count(i_storage.driver_options) == 1
++    opt := i_storage.driver_options[0]
++    key := "\"io.kubernetes.cri.image-name\":"
++    count(split(opt, key)) == 2
++    count(split(opt, concat("", [key, "\"", p_image, "\""]))) == 2
++}
++
+ # Get the value of the S_NAME_KEY annotation and
+ # correlate it with other annotations and process fields.
+ allow_by_anno(p_oci, i_oci, p_storages, i_storages) if {
