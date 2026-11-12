@@ -33,7 +33,7 @@ $ kubectl get pod trustee-cvm -o jsonpath='{.status.podIP}'
 $ kubectl get pod trustee-cvm -o jsonpath='{.status.initContainerStatuses[0].restartCount} {.status.initContainerStatuses[0].state.terminated.reason}'
 0 Completed
 
-$ kubectl get events --field-selector involvedObject.name=trustee-cvm --sort-by=.lastTimestamp \
+$ kubectl get events --field-selector involvedObject.uid=$(kubectl get pod trustee-cvm -o jsonpath='{.metadata.uid}') --sort-by=.lastTimestamp \
     -o custom-columns=TYPE:.type,REASON:.reason,OBJECT:.involvedObject.fieldPath,COUNT:.count,MESSAGE:.message
 ... (the EV-17 events, then:)
 Normal    Created     spec.containers{trustee}   2   Container created

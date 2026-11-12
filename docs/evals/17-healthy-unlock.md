@@ -79,7 +79,7 @@ NAME                       ENDPOINTS         AGE
 trustee-bootstrap-helper   <pod-ip>:8090     47s
 trustee                    <pod-ip>:8080     46s
 
-$ kubectl get events --field-selector involvedObject.name=trustee-cvm --sort-by=.lastTimestamp \
+$ kubectl get events --field-selector involvedObject.uid=$(kubectl get pod trustee-cvm -o jsonpath='{.metadata.uid}') --sort-by=.lastTimestamp \
     -o custom-columns=TYPE:.type,REASON:.reason,OBJECT:.involvedObject.fieldPath,MESSAGE:.message
 TYPE      REASON      OBJECT                                  MESSAGE
 Normal    Scheduled   <none>                                  Successfully assigned default/trustee-cvm to <node>
