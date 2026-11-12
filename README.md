@@ -17,6 +17,12 @@ Terms in **bold** are defined in [`GLOSSARY.md`](GLOSSARY.md).
 
 Nothing on the host ever sees a Share, the key or the plaintext config. [`SECURITY_THREAT_MODEL.md`](SECURITY_THREAT_MODEL.md) lists the claims and their limits.
 
+### See it run
+
+![A recorded Unlock Ceremony on kind + Kata + swtpm](docs/demo/unlock-ceremony.gif)
+
+Each prompt names who runs the step. The Ceremony Authority splits the key, and the Infrastructure Operator seals the config and deploys the Trustee CVM. Two Security Operators review its Init-Data and approve. Then a workload gets its secret, and a workload with other Init-Data is refused. To watch at your own pace, run `asciinema play docs/demo/unlock-ceremony.cast`. To record it again, run `test/e2e/demo.sh record`.
+
 ## Where to start
 
 | You are | Read |
