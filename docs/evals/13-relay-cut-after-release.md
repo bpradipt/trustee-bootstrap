@@ -1,7 +1,7 @@
 # EV-13: Relay cut after release
 
 **Category:** partial failure
-**Runs on:** kind + swtpm, with a TCP proxy between `approve` and the endpoint
+**Runs on:** kind + swtpm; `test/e2e/evals-cluster.sh ev13`, with the attacker's `cut-attest` and `cut-close` modes
 **Covers:** invariant 3 (index counted once); AT-07 at pod level; AT-18; spec §4 one operator's flow; ticket 12's note on `409` after a close
 
 ## Setup
@@ -28,4 +28,4 @@ Then Bob runs `approve` with no cut.
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **pass**. Cut 1, as the attestation answer came back: `approve` failed with `relay ended`, left nothing behind, and the helper held no Share. The retry was accepted on the first try. Cut 2, after the helper accepted: `approve` failed and left nothing behind. `status` listed Alice once, the retry said `index 1 already accepted this boot`, and Carol's Share completed the unlock.

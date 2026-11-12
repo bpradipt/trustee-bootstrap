@@ -1,7 +1,7 @@
 # EV-14: Broken sealed resource policy
 
 **Category:** partial failure
-**Runs on:** kind + swtpm
+**Runs on:** kind + swtpm; `test/e2e/evals-cluster.sh ev14`
 **Covers:** the open Phase 0 item in spec §9; threat "unlocked Trustee runs its built-in default policy"; invariant 7; AT-24; sealed-config check 3 (spec §3)
 
 ## Setup
@@ -24,4 +24,4 @@ Ticket 14 saw the pinned KBS deny every request when it couldn't load a policy, 
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **pass**. `seal` accepted the broken policy, the helper published it and exited 0, and Trustee became Ready. Trustee refused both workloads. KBS doesn't fall back to its built-in default, which closes a Phase 0 item in spec §9.

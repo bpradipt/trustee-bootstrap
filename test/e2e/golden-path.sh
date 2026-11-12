@@ -77,12 +77,13 @@ status_refused() {
 	if ((rc == 0)) || [[ $out != *"connection refused"* ]]; then die "the helper still answers status: $out"; fi
 }
 
-# approve_ok <holder> <index>: the holder's approve is accepted, and its
-# audit records tell the whole run without the Share.
+# approve_ok <holder> <index> [policy dir] [share file]: the holder's
+# approve is accepted, and its audit records tell the whole run without the
+# Share. The policy and the Share default to the holder's from setup.
 approve_ok() {
 	local msgs share
 	show "trustee-bootstrap approve --endpoint \"\$ENDPOINT\" --policy ~/trustee-policy --share-file $1.share" \
-		tb approve --endpoint "$endpoint" --policy "$work/policy-$1" --share-file "$work/ceremony/$1.share"
+		tb approve --endpoint "$endpoint" --policy "${3:-$work/policy-$1}" --share-file "${4:-$work/ceremony/$1.share}"
 	((rc == 0)) || die "$1's approve failed"
 	[[ ${out##*$'\n'} == accepted ]] || die "$1's approve did not print accepted"
 	msgs=$(grep -o '"msg":"[a-z_]*"' <<<"$out" | cut -d'"' -f4 | paste -sd' ')
@@ -90,7 +91,7 @@ approve_ok() {
 		die "$1's audit records: $msgs"
 	[[ $out == *'"index":'"$2,"*'"code":1000'*'"accepted":true'* ]] ||
 		die "$1's audit records lack index $2, close code 1000 or accepted"
-	share=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["share"])' "$work/ceremony/$1.share")
+	share=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["share"])' "${4:-$work/ceremony/$1.share}")
 	[[ $out != *"$share"* ]] || die "$1's approve printed the Share"
 }
 

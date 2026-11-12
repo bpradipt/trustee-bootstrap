@@ -118,7 +118,7 @@ scene() {
 	endpoint=$ENDPOINT
 	wait_helper
 	run 'kubectl get pod trustee-cvm'
-	extract_initdata
+	extract_initdata "$work/trustee-cvm.yaml" "$work/init.toml"
 
 	say "4. Each Security Operator reviews the measured Init-Data and builds an Operator Policy"
 	as alice

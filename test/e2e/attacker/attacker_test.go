@@ -15,6 +15,15 @@
 //	pass        relay the real helper's attestation untouched; record it
 //	tee-pubkey  relay it with the attacker's TEE key in place of the CVM's (AT-05)
 //	replay      relay it with the recorded attestation from pass (AT-05)
+//	cut-attest  relay it, then drop approve's relay as the attestation answer
+//	            comes back (EV-13)
+//	cut-close   relay it, then drop approve's relay without a close frame
+//	            once the helper has ended its own (EV-13)
+//	splice      relay one approve run to every helper in -helpers in turn,
+//	            and log what each got (EV-02)
+//
+// -forge-status makes the status passthrough show a new boot that holds no
+// Shares, whatever the real helper says (EV-03).
 //
 // Directly (-kbs): forge and admin against a KBS URL, the unlocked Trustee.
 package attacker
@@ -30,6 +39,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -65,6 +75,8 @@ var (
 	ak        = flag.String("ak", "", "forge: the ak_public claim")
 	unchanged = flag.String("policy-unchanged", "", "admin through a relay: the Operator Verifier's resource policy must still equal this file")
 	evidence  = flag.String("evidence", "", "pass records the genuine attestation request here; replay sends it again")
+	helpers   = flag.String("helpers", "", "splice: the real Bootstrap Helpers to relay to, comma-separated, in order")
+	forge     = flag.Bool("forge-status", false, "pass status through with a new boot_id and no accepted or rejected Shares")
 )
 
 func TestAttack(t *testing.T) {
@@ -119,8 +131,27 @@ func proxyStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	if !*forge {
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+		return
+	}
+	// A new boot that holds nothing: what an operator expects after a restart.
+	var st helper.Status
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	st.BootID = forgedBootID()
+	st.State, st.Accepted, st.Rejected = helper.StateCollecting, []int{}, []int{}
+	json.NewEncoder(w).Encode(st)
+}
+
+// forgedBootID looks like the helper's: 128 random bits in unpadded base32.
+func forgedBootID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)
 }
 
 func onRelay(t *testing.T, ctx context.Context, ws *websocket.Conn) {
@@ -128,8 +159,10 @@ func onRelay(t *testing.T, ctx context.Context, ws *websocket.Conn) {
 	case "hold":
 		_, _, err := ws.Read(ctx)
 		t.Logf("approve left the relay: %v", err)
-	case "pass", "tee-pubkey", "replay":
+	case "pass", "tee-pubkey", "replay", "cut-attest", "cut-close":
 		manInTheMiddle(t, ctx, ws)
+	case "splice":
+		splice(t, ctx, ws)
 	default:
 		kbsAttack(t, throughRelay(ctx, ws), "http://operator-verifier")
 		checkPolicyUnchanged(t)
@@ -232,28 +265,73 @@ func manInTheMiddle(t *testing.T, ctx context.Context, operator *websocket.Conn)
 		operator.Close(websocket.StatusInternalError, "attacker could not reach the helper")
 		return
 	}
-	var n memnet.Network
-	l, _ := n.Listen("tcp", "mitm")
-	m := &tamperer{t: t}
-	go http.Serve(l, &httputil.ReverseProxy{Rewrite: m.rewrite, ModifyResponse: m.observe, Transport: verifierClient.Transport})
-	err = relay.Operator(ctx, guest, func(ctx context.Context) (net.Conn, error) {
-		return n.DialContext(ctx, "tcp", "mitm")
-	}, relay.DefaultLimits())
-	// approve hears how the helper ended the relay.
+	m := &tamperer{t: t, cut: func() { operator.CloseNow() }}
+	dial := m.serve(verifierClient)
+	err = relay.Operator(ctx, guest, dial, relay.DefaultLimits())
+	// approve hears how the helper ended the relay, unless the attack drops it.
 	var ce websocket.CloseError
 	if !errors.As(err, &ce) {
 		ce = websocket.CloseError{Code: websocket.StatusInternalError, Reason: "relay failed"}
 	}
 	t.Logf("the helper ended the relay: %d %s", ce.Code, ce.Reason)
+	if *attack == "cut-close" {
+		t.Log("cut-close: dropping approve's relay without a close frame")
+		operator.CloseNow()
+		return
+	}
 	operator.Close(ce.Code, ce.Reason)
 	m.verdict()
 }
 
+// splice relays one approve run to each helper in -helpers in turn, so one
+// Operator Verifier serves several CVMs, and logs what each got.
+func splice(t *testing.T, ctx context.Context, operator *websocket.Conn) {
+	m := &tamperer{t: t}
+	dial := m.serve(throughRelay(ctx, operator))
+	for _, h := range strings.Split(*helpers, ",") {
+		m.reset()
+		u, err := url.JoinPath(h, helper.RelayPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		guest, _, err := websocket.Dial(ctx, u, nil)
+		if err != nil {
+			t.Logf("splice: %s: released=false close=0 (%v)", h, err)
+			continue
+		}
+		code := websocket.CloseStatus(relay.Operator(ctx, guest, dial, relay.DefaultLimits()))
+		t.Logf("splice: %s: released=%t close=%d", h, m.didRelease(), code)
+	}
+	operator.Close(websocket.StatusNormalClosure, "")
+}
+
 type tamperer struct {
 	t        *testing.T
+	cut      func() // cut-attest: drop approve's relay
 	mu       sync.Mutex
 	tampered int  // attestation requests rewritten (or recorded, for pass)
 	released bool // the Operator Verifier answered a resource request with 200
+}
+
+// serve runs the tampering proxy in front of the Operator Verifier that
+// client reaches, and returns how the helper's relay dials it.
+func (m *tamperer) serve(client *http.Client) func(context.Context) (net.Conn, error) {
+	var n memnet.Network
+	l, _ := n.Listen("tcp", "mitm")
+	go http.Serve(l, &httputil.ReverseProxy{Rewrite: m.rewrite, ModifyResponse: m.observe, Transport: client.Transport})
+	return func(ctx context.Context) (net.Conn, error) { return n.DialContext(ctx, "tcp", "mitm") }
+}
+
+func (m *tamperer) reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.released = false
+}
+
+func (m *tamperer) didRelease() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.released
 }
 
 func (m *tamperer) rewrite(pr *httputil.ProxyRequest) {
@@ -328,15 +406,25 @@ func (m *tamperer) observe(resp *http.Response) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.t.Logf("%s %s: HTTP %d", resp.Request.Method, resp.Request.URL.Path, resp.StatusCode)
+	if *attack == "cut-attest" && resp.Request.URL.Path == "/kbs/v0/attest" {
+		m.t.Log("cut-attest: dropping approve's relay as the attestation answer comes back")
+		m.cut()
+		return errors.New("relay cut during attestation")
+	}
 	if strings.HasPrefix(resp.Request.URL.Path, "/kbs/v0/resource/") && resp.StatusCode == http.StatusOK {
 		m.released = true
 	}
 	return nil
 }
 
+// verdict judges the tampering attacks. The cut attacks only disturb the
+// relay, and the eval that runs them judges the outcome.
 func (m *tamperer) verdict() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if strings.HasPrefix(*attack, "cut-") {
+		return
+	}
 	if m.tampered == 0 {
 		m.t.Errorf("%s: saw no attestation request", *attack)
 	}

@@ -7,12 +7,15 @@
 
 tb() { "$work/bin/trustee-bootstrap" "$@"; }
 
-# policy_build <holder>: the Security Operator reviews init.toml and builds
-# their Operator Policy from it. Prints the Init-Data digest it computed.
+# policy_build <holder> [out dir]: the Security Operator reviews init.toml
+# and builds their Operator Policy from it. Prints the Init-Data digest it
+# computed. For another bundle, Init-Data or Key Ceremony, set
+# bundle_sha256, init_toml or ceremony_dir in a subshell.
 policy_build() {
-	tb policy build --init-data "$work/init.toml" --reference-values "$work/rv.json" --accept-tee tpm --allow-untested-profiles \
-		--bundle-sha256 "$bundle_sha256" --manifest "$work/ceremony/ceremony.json" \
-		--share-file "$work/ceremony/$1.share" --out-dir "$work/policy-$1"
+	local c=${ceremony_dir:-$work/ceremony}
+	tb policy build --init-data "${init_toml:-$work/init.toml}" --reference-values "$work/rv.json" --accept-tee tpm --allow-untested-profiles \
+		--bundle-sha256 "$bundle_sha256" --manifest "$c/ceremony.json" \
+		--share-file "$c/$1.share" --out-dir "${2:-$work/policy-$1}"
 }
 
 # status_is <state accepted>, e.g. status_is "PUBLISHED [1, 3]"

@@ -1,7 +1,7 @@
 # EV-09: Upgrade the Bootstrap Helper and roll back
 
 **Category:** upgrade
-**Runs on:** kind + swtpm
+**Runs on:** kind + swtpm; `test/e2e/evals-cluster.sh ev09`
 **Covers:** [trustee-upgrade.md](../runbooks/trustee-upgrade.md), which ticket 16 never walked as a whole; threat "Trustee replaced after unlock"; AT-04; AT-10 at pod level
 
 ## Setup
@@ -31,4 +31,4 @@ Then follow the runbook's *Roll back*.
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **fail** at fault 2. Fault 1 held: Alice's v1 policy released nothing to the v2 pod. With v1's digest typed into the v2 pod and no new genpolicy, no policy event appeared and the helper ran. A follow-up test swapped in an image with an extra layer under unchanged Init-Data, and Alice's Share went to it. See [ticket 21](../tickets/21-pin-container-images-in-the-agent-policy.md): the Kata 4.2.0 agent policy doesn't pin a guest-pulled image.
