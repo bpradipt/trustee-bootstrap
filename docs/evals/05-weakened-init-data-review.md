@@ -1,7 +1,7 @@
 # EV-05: Security Operator reviews a weakened Init-Data
 
 **Category:** operator mistake
-**Runs on:** genpolicy only, no cluster
+**Runs on:** genpolicy and the test registry, no CVM; `test/e2e/evals-cluster.sh ev05`
 **Covers:** residual risk "Init-Data is the single root"; conditions 2 and 4; [unlock-ceremony.md](../runbooks/unlock-ceremony.md) part 2, step 1
 
 ## Setup
@@ -36,4 +36,5 @@ The checklist has no line for the number of containers. The sidecar variant show
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **fail**. The checklist caught seven of the eight variants but not the sidecar, which led to [ticket 22](../tickets/22-review-the-container-set.md).
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`, with ticket 22's container-set check: **pass**. The unchanged Init-Data passed every check, and every variant failed at least one. The sidecar failed the container set, and the KBS image failed the KBS digest.

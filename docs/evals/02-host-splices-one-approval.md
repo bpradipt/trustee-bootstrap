@@ -1,7 +1,7 @@
 # EV-02: Host splices one approval into several CVMs
 
 **Category:** hostile host
-**Runs on:** kind + swtpm, with a new `splice` mode in `test/e2e/attacker`
+**Runs on:** kind + swtpm; `test/e2e/evals-cluster.sh ev02`, with the attacker's `splice` mode
 **Covers:** claim "no non-approved CVM receives K Shares"; invariant 1; spec §4 relay framing; ticket 03 (the host can forge the close code)
 
 ## Setup
@@ -33,4 +33,4 @@ Decided on 2026-11-12: accept and document, in `SECURITY_THREAT_MODEL.md` and th
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **pass**. One `approve` run fed two approved CVMs. The first was the setup's pod. The second was the same rendered pod in another namespace, where the agent policy let it run, so a clone needs no second cluster. Both helpers closed the relay with `1000`. The CVM with other Init-Data got nothing and closed with `1008`.

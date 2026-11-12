@@ -1,7 +1,7 @@
 # EV-10: Roster change locks out a departed operator
 
 **Category:** roster change
-**Runs on:** kind + swtpm; part c in `go test`
+**Runs on:** kind + swtpm; `test/e2e/evals-cluster.sh ev10`; part 2.3 in `go test`
 **Covers:** residual risk "roster change requires a full new Key Ceremony"; invariant 3; AT-08; [roster-change.md](../runbooks/roster-change.md), which ticket 16 never walked as a whole
 
 ## Setup
@@ -29,4 +29,4 @@
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **pass**. The new roster unlocked B under a new `key_id`. B has a new TLS key, certificate and secret, and a workload that pins A's certificate got nothing. `policy build` refused Carol's old Share (`the Share file has key_id …, the Operator Policy …`), and `approve` stopped it at the `key_id` check. The script doesn't decrypt the old A with old Shares: no command combines Shares outside the helper.

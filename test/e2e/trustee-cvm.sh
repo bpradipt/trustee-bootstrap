@@ -123,12 +123,12 @@ build_helper() {
 	info "image: two builds of the Bootstrap Helper image are both $digest"
 }
 
-# workload_initdata <extra line>: Init-Data for a workload that attests to
-# the unlocked Trustee and trusts only Trustee's certificate on top of the
-# system roots.
+# workload_initdata <extra line> [certificate]: Init-Data for a workload that
+# attests to the unlocked Trustee and trusts only Trustee's certificate, or
+# the one given, on top of the system roots.
 workload_initdata() {
 	local cert
-	cert=$(cat "$work/tree/tls.crt")
+	cert=$(cat "${2:-$work/tree/tls.crt}")
 	cat <<-EOF
 		version = "0.1.0"
 		algorithm = "sha256"
@@ -216,19 +216,20 @@ render_pod() {
 	sed "s|@HELPER_IMAGE@|$helper_image|; s|@MANIFEST_SHA256@|$manifest_sha256|" "$examples/trustee-cvm.yaml" >"$work/trustee-cvm.yaml"
 	"$gp/genpolicy" -y "$work/trustee-cvm.yaml" -p "$gp/rules.rego" -j "$gp" \
 		--initdata-path="$work/init-data.toml" --insecure-registry="$registry" >/dev/null
-	extract_initdata
+	extract_initdata "$work/trustee-cvm.yaml" "$work/init.toml"
 }
 
-# extract_initdata: init.toml, the Init-Data that genpolicy put in the
-# rendered pod's annotation: what the CVM measures and the Security
-# Operators review.
+# extract_initdata [pod yaml] [init.toml]: the Init-Data that genpolicy put
+# in the rendered pod's annotation: what the CVM measures and the Security
+# Operators review. Defaults to the setup's pod and $work/init.toml.
 extract_initdata() {
-	python3 - "$work/trustee-cvm.yaml" >"$work/init.toml" <<-'EOF'
+	local out=${2:-$work/init.toml}
+	python3 - "${1:-$work/trustee-cvm.yaml}" >"$out" <<-'EOF'
 		import base64, gzip, re, sys
 		m = re.search(r'cc_init_data: *"?([A-Za-z0-9+/=]+)', open(sys.argv[1]).read())
 		sys.stdout.buffer.write(gzip.decompress(base64.b64decode(m.group(1))))
 	EOF
-	grep -q '"policy.rego"' "$work/init.toml" || die "genpolicy wrote no agent policy into the Init-Data"
+	grep -q '"policy.rego"' "$out" || die "genpolicy wrote no agent policy into the Init-Data"
 }
 
 ready() { kc get pod "$POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'; }

@@ -1,7 +1,7 @@
 # EV-12: `approve` killed with SIGKILL
 
 **Category:** partial failure
-**Runs on:** an operator workstation with rootless podman; the endpoint is the attacker in `hold` mode, so no cluster is needed
+**Runs on:** an operator workstation with rootless podman, with the attacker in `hold` mode in front of a real helper; `test/e2e/evals-cluster.sh ev12`
 **Covers:** spec §0 requirement 3; invariant 6 on the operator side; AT-18, which covers success, failure, SIGINT and SIGTERM
 
 ## Setup
@@ -29,4 +29,4 @@ Expect a fail today. `pkg/verifier` starts the engine with `exec.CommandContext`
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **fail**, as expected. After the SIGKILL, and still after a second `approve`, three things remained: the KBS container, its listener on `127.0.0.1`, and the run directory holding the Share payload. See [ticket 20](../tickets/20-clean-up-after-a-killed-approve.md). The eval removes them afterwards.

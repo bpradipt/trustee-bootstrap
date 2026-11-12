@@ -1,7 +1,7 @@
 # EV-04: Impostor Trustee serves workloads
 
 **Category:** hostile host
-**Runs on:** kind + swtpm
+**Runs on:** kind + swtpm; `test/e2e/evals-cluster.sh ev04`
 **Covers:** claim "an attacker can't present Trustee's identity to workloads"; invariant 9; condition 6; residual risk "`kbs_cert` adds a root"; AT-17, which tests only the real Trustee
 
 ## Setup
@@ -26,4 +26,4 @@ The guest keeps its system CAs. A certificate for Trustee's host name from a CA 
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **pass**. The impostor KBS served its own value to a workload that pins the impostor's certificate, which is the positive control. It served nothing to a workload that pins Trustee's certificate (`DENIED`). With the Service back on Trustee, a new workload got its sealed resource.

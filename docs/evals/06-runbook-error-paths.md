@@ -1,7 +1,7 @@
 # EV-06: Runbook error paths match the CLI
 
 **Category:** operator mistake
-**Runs on:** kind + swtpm
+**Runs on:** kind + swtpm; `test/e2e/evals-cluster.sh ev06`
 **Covers:** *When a step fails* in [unlock-ceremony.md](../runbooks/unlock-ceremony.md), [roster-change.md](../runbooks/roster-change.md) and [trustee-upgrade.md](../runbooks/trustee-upgrade.md)
 
 ## Setup
@@ -36,4 +36,4 @@ A message the runbook doesn't quote fails the eval, and so does a runbook step t
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **pass**. Each fault showed the text the runbook quotes, and each runbook step led to the right action. An oversized bundle can't be injected through a ConfigMap: the API server refuses one over 1 MiB (`Too long: may not be more than 1048576 bytes`), so the helper's own cap never sees it.

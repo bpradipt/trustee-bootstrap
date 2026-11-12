@@ -1,7 +1,7 @@
 # EV-03: Host ignores a withdrawal
 
 **Category:** hostile host
-**Runs on:** kind + swtpm, with an attacker mode that rewrites `status`
+**Runs on:** kind + swtpm; `test/e2e/evals-cluster.sh ev03`, with the attacker's `-forge-status`
 **Covers:** residual risk "released Shares are irrevocable for a live boot"; [withdraw-approval.md](../runbooks/withdraw-approval.md); AT-12; spec §5 COLLECTING
 
 ## Setup
@@ -31,4 +31,4 @@ The second-person checks in withdraw-approval.md compare `boot_id` and the pod U
 
 ## Results
 
-None yet.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **pass**. The host's endpoint showed a new `boot_id` and no Shares. The old boot rejected Carol's Share for B (`rejected: [3]`) and stayed locked with only Alice's Share. Bob's Share for A then unlocked it, as the residual risk says. The runbook gives the Security Operators no check that the host can't forge.
