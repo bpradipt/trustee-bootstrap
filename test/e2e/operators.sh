@@ -8,11 +8,11 @@
 tb() { "$work/bin/trustee-bootstrap" "$@"; }
 
 # policy_build <holder>: the Security Operator reviews init.toml and builds
-# their Operator Policy from it.
+# their Operator Policy from it. Prints the Init-Data digest it computed.
 policy_build() {
 	tb policy build --init-data "$work/init.toml" --reference-values "$work/rv.json" --accept-tee tpm --allow-untested-profiles \
 		--bundle-sha256 "$bundle_sha256" --manifest "$work/ceremony/ceremony.json" \
-		--share-file "$work/ceremony/$1.share" --out-dir "$work/policy-$1" >/dev/null
+		--share-file "$work/ceremony/$1.share" --out-dir "$work/policy-$1"
 }
 
 # status_is <state accepted>, e.g. status_is "PUBLISHED [1, 3]"

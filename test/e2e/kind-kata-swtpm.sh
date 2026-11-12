@@ -332,17 +332,16 @@ pcr8_for() {
 	python3 -c 'import hashlib,sys; d=hashlib.sha256(sys.stdin.buffer.read()).digest(); print(hashlib.sha256(bytes(32)+d).hexdigest())'
 }
 
-# run_probe <name> <initdata>: a pod that asks its CDH for $RESOURCE; prints
-# what it got.
-run_probe() {
-	local name=$1 annotation
+# probe_pod <name> <initdata>: the manifest of a pod that asks its CDH for
+# $RESOURCE and prints what it got, or DENIED.
+probe_pod() {
+	local annotation
 	annotation=$(printf '%s' "$2" | gzip -9 | b64)
-	kc delete pod "$name" --ignore-not-found --wait >/dev/null
-	kc apply -f - >/dev/null <<-EOF
+	cat <<-EOF
 		apiVersion: v1
 		kind: Pod
 		metadata:
-		  name: $name
+		  name: $1
 		  annotations:
 		    io.katacontainers.config.hypervisor.cc_init_data: "$annotation"
 		spec:
@@ -353,6 +352,13 @@ run_probe() {
 		    image: $PROBE_IMAGE
 		    command: ["sh", "-c", "wget -qO- http://127.0.0.1:8006/cdh/resource/$RESOURCE 2>/dev/null || echo DENIED"]
 	EOF
+}
+
+# run_probe <name> <initdata>: runs probe_pod's pod; prints what it got.
+run_probe() {
+	local name=$1
+	kc delete pod "$name" --ignore-not-found --wait >/dev/null
+	probe_pod "$name" "$2" | kc apply -f - >/dev/null
 	kc wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$name" --timeout=300s >/dev/null ||
 		die "$name did not finish: $(kc describe pod "$name" | tail -15)"
 	kc logs "$name"
