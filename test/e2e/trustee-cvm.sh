@@ -425,8 +425,10 @@ check_swapped_manifest() {
 	info "AT-11: with another ceremony.json in the ConfigMap, the helper exited 1 in LOCKED"
 }
 
-main() {
-	trap cleanup EXIT
+# setup: everything up to the Security Operators' review: the registry and
+# the helper image, a 2-of-3 Key Ceremony, the Sealed Bundle, and the
+# rendered pod with its Init-Data. golden-path.sh shares it.
+setup() {
 	delete_objects --wait || true
 	gw=$(node ip -4 route show default | awk '{print $3}')
 	ak=$(node sed '/-----/d' /opt/kata-swtpm/ak.pem | tr -d '\n')
@@ -437,6 +439,11 @@ main() {
 	ceremony_and_seal
 	cvm_initdata
 	render_pod
+}
+
+main() {
+	trap cleanup EXIT
+	setup
 	policy_build alice
 	policy_build carol
 
