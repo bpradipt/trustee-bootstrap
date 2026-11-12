@@ -23,7 +23,7 @@ These tickets cut [`IMPLEMENTATION_SPEC.md`](../../IMPLEMENTATION_SPEC.md) into 
 | 15 | [cococtl mount](15-cococtl-mount.md) | done | the cococtl PR, after a tagged release |
 | 16 | [Runbooks and supply chain](16-runbooks-and-supply-chain.md) | done | |
 | 17 | [Real-TEE release gate](17-real-tee-release-gate.md) | **open** | a run on real TDX, SNP or Azure vTPM hardware |
-| 18 | [Check Trustee's TLS certificate when sealing](18-check-trustee-tls-certificate.md) | in-progress | |
+| 18 | [Check Trustee's TLS certificate when sealing](18-check-trustee-tls-certificate.md) | done | |
 
 Ticket 17 is the go/no-go. Until it passes, every claim profile stays untested and nobody runs a production unlock.
 

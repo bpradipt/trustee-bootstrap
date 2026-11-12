@@ -4,7 +4,7 @@
 
 **Result:** a Sealed Bundle (`bundle.age`), its SHA-256 (the Approved Bundle digest), and Trustee's public TLS certificate for workloads. The plaintext config, including Trustee's TLS private key and every resource secret, is gone from the sealing machine.
 
-**Mitigates:** *the Infrastructure Operator sees the plaintext config* (ADR 0008). Nothing in the protocol detects a kept copy, so this runbook is the only guard. It also covers *`kbs_cert` adds a root* (step 3 names a cluster-internal host) and *upstream sample configs are unsafe* (step 2 starts from the repo's secure config, and `seal` refuses an insecure one). See `SECURITY_THREAT_MODEL.md`.
+**Mitigates:** *the Infrastructure Operator sees the plaintext config* (ADR 0008). Nothing in the protocol detects a kept copy, so this runbook is the only guard. It also covers *`kbs_cert` adds a root* (step 3 names a cluster-internal host, and `seal` refuses any other) and *upstream sample configs are unsafe* (step 2 starts from the repo's secure config, and `seal` refuses an insecure one). See `SECURITY_THREAT_MODEL.md`.
 
 ## Preconditions
 
@@ -83,6 +83,7 @@ The witness confirms, and signs the record of:
 ## When a step fails
 
 - **`sealed-config checks: ...`** at step 6: `seal` names the failed check, for example `[attestation_token] insecure_header_jwk is true`, `resource policy ... is KBS's built-in default`, or a signer file that is missing or that `trusted_certs_paths` does not list. Fix the tree in `/mnt/seal` and run step 6 again. `seal` wrote no bundle.
+- **`Trustee TLS certificate ...`** or **`Trustee TLS key and certificate are not a matching PEM pair`** at step 6: the pair from step 3 names a host outside the cluster, names no host, is a CA certificate, or doesn't match `tls.key`. Delete `tree/tls.key` and `tree/tls.crt`, make them again as step 3 shows, and run step 6 again.
 - **`parse recipient`** at step 6: `ceremony.json` is damaged or is not a Ceremony Manifest. Get it again and recheck its digest.
 - **The bundle is over 1048576 bytes:** the Bootstrap Helper refuses it. Move large resources out of the bundle and seal again.
 - **A plaintext copy may survive** (an editor swap file, a terminal log, a file written outside `/mnt/seal`, swap that was on): treat every secret in the tree as known to someone else. Generate new keys and secrets, seal again, and publish only the new digest. Tell Security Operators not to approve the old digest.

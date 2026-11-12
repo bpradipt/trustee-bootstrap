@@ -101,7 +101,7 @@ The claim depends on seven conditions:
 | Operators can't reach the helper (Service routes only to Ready pods) | The helper's Service sets `publishNotReadyAddresses: true` | AT-25 |
 | Trustee replaced after unlock | Image digests and container set pinned by agent policy | AT-04 |
 | Partial or corrupt unseal | Authenticated age decryption, safe tar extraction, atomic rename, fail closed | AT-14 |
-| An impostor serves workloads as Trustee | Once the sealing machine destroys its plaintext, Trustee's TLS key exists only in the Sealed Bundle, and workloads add its certificate as a trust root. Its certificate names a cluster-internal host or private IP, so no public CA will issue a competing one | AT-17 |
+| An impostor serves workloads as Trustee | Once the sealing machine destroys its plaintext, Trustee's TLS key exists only in the Sealed Bundle, and workloads add its certificate as a trust root. Its certificate names a cluster-internal host or private IP, so no public CA will issue a competing one. `seal` and the Bootstrap Helper refuse a certificate that names any other host (sealed-config check 4) | AT-17, AT-27 |
 
 ## Security invariants
 
@@ -121,7 +121,7 @@ The claim depends on seven conditions:
 - **Init-Data is the single root.** A wrong or weak Init-Data, such as an agent policy that allows exec or an unpinned arg, defeats everything. Operators must review it, not just hash it.
 - **Agent policy lets the host drop pinned values** (it cannot change them). The Bootstrap Helper must treat a missing flag as fatal. This is tested.
 - **Plain HTTP relay.** Evidence, Init-Data plaintext, tokens and status are visible to network observers. None of them is secret, but this is metadata exposure.
-- **`kbs_cert` adds a root; it doesn't pin.** Workload guests keep their system CAs. If a guest trusts a CA that will certify Trustee's host name, that CA's customer can impersonate Trustee and serve workloads fake resources, though it can't obtain their secrets. A cluster-internal name or private IP limits this to private CAs in the guest image.
+- **`kbs_cert` adds a root; it doesn't pin.** Workload guests keep their system CAs. If a guest trusts a CA that will certify Trustee's host name, that CA's customer can impersonate Trustee and serve workloads fake resources, though it can't obtain their secrets. A cluster-internal name or private IP limits this to private CAs in the guest image. `seal` and the Bootstrap Helper refuse a certificate that names anything else (ticket 18).
 - **Upstream sample configs are unsafe here.** Trustee's sample KBS config enables `insecure_header_jwk` and `InsecureAllowAll`. The CLI must generate its own config and reject both.
 - **The Infrastructure Operator sees the plaintext config.** A copy kept after sealing lets them impersonate Trustee and read every resource it serves. The quorum can't detect this; only the sealing runbook guards against it (ADR 0008).
 - **Claim profiles cover only what was tested.** A TEE type whose profile has never passed a real-TEE run may accept wrong evidence. Production Operator Policies accept only tested profiles.

@@ -16,7 +16,7 @@ A cluster that refuses everything passes every negative eval. The healthy-path e
 | EV-04 | [Impostor Trustee serves workloads](04-impostor-trustee.md) | hostile host | kind + swtpm | not run |
 | EV-05 | [Security Operator reviews a weakened Init-Data](05-weakened-init-data-review.md) | operator mistake | genpolicy only | not run |
 | EV-06 | [Runbook error paths match the CLI](06-runbook-error-paths.md) | operator mistake | kind + swtpm | not run |
-| EV-07 | [Seal with a public or CA certificate](07-seal-with-public-certificate.md) | operator mistake | sealing machine | not run |
+| EV-07 | [Seal with a public or CA certificate](07-seal-with-public-certificate.md) | operator mistake | sealing machine | pass, 2026-11-12 |
 | EV-08 | [Ceremonies leave no secret on disk](08-ceremonies-leave-no-secret.md) | operator mistake | scratch VM | not run |
 | EV-09 | [Upgrade the Bootstrap Helper and roll back](09-helper-upgrade-and-rollback.md) | upgrade | kind + swtpm | not run |
 | EV-10 | [Roster change locks out a departed operator](10-roster-change.md) | roster change | kind + swtpm, go test | not run |
@@ -99,7 +99,7 @@ Each claim, invariant and residual risk in `SECURITY_THREAT_MODEL.md`, the tests
 | Init-Data is the single root | The review checklist in the Unlock Ceremony runbook | Nobody has tested the checklist against a weakened Init-Data | EV-05 |
 | Agent policy lets the host drop pinned values | AT-11, `cmd/bootstrap-helper` tests, e2e `check_tampered` | | |
 | Plain HTTP relay | AT-06 | Accepted metadata exposure | |
-| `kbs_cert` adds a root | The seal runbook's witness check | No code reads the certificate | EV-04, EV-07 |
+| `kbs_cert` adds a root | Sealed-config check 4 in `seal` and the helper (ticket 18, AT-27); the seal runbook's witness check | | EV-04, EV-07 |
 | Upstream sample configs are unsafe | AT-21, AT-22, AT-27 | | |
 | The Infrastructure Operator sees the plaintext | The seal runbook only | Nobody has checked the runbook for leaks | EV-08 |
 | Claim profiles cover only what was tested | `policy build` refuses untested profiles (ticket 14) | Real-TEE run | ticket 17 |

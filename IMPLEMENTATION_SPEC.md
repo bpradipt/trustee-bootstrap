@@ -35,7 +35,7 @@ Unlock an unmodified, full CNCF Trustee running in a **Trustee CVM** only after 
 
 **How workloads trust Trustee:** Trustee's TLS private key exists only inside the Sealed Bundle, once the Infrastructure Operator has destroyed the plaintext they sealed it from (ADR 0008). Workloads add Trustee's certificate (`kbs_cert`) to their own Init-Data. Rotating Trustee's certificate means sealing a new bundle and updating every workload's Init-Data.
 
-`kbs_cert` *adds* a trust root; the guest keeps trusting its system CAs. So Trustee's certificate must name a host that no public CA will certify: a cluster-internal DNS name or a private IP. Otherwise anyone holding a publicly trusted certificate for that name can impersonate Trustee to workloads. An impostor still can't obtain workload secrets, but it can serve workloads fake resources. *(Phase 0 result: guest-components v0.22.0 can't. Ticket 06 records the upstream gap and the smallest fix.)*
+`kbs_cert` *adds* a trust root; the guest keeps trusting its system CAs. So Trustee's certificate must name a host that no public CA will certify: a cluster-internal DNS name or a private IP. Sealed-config check 4 (§3) refuses any other name. Otherwise anyone holding a publicly trusted certificate for that name can impersonate Trustee to workloads. An impostor still can't obtain workload secrets, but it can serve workloads fake resources. *(Phase 0 result: guest-components v0.22.0 can't. Ticket 06 records the upstream gap and the smallest fix.)*
 
 ## 2. Actors
 
@@ -71,6 +71,7 @@ All formats are owned by one Go module in this repo (ADR 0001, ADR 0006).
      1. The KBS config sets `insecure_header_jwk = false` and `insecure_http = false`, and admin authorization isn't `InsecureAllowAll`.
      2. The AS token broker names a signer key and certificate that exist in the tree, and KBS `trusted_certs_paths` lists that certificate. Without this, KBS can't verify any token and serves nothing.
      3. The KBS resource policy exists at the storage backend's exact policy key, is non-empty, and differs from upstream's built-in default. If it's missing, KBS installs that default, which releases every resource to any attested non-sample TEE.
+     4. The HTTPS key and certificate that `[http_server]` names exist in the tree and match. The certificate is a leaf, not a CA, and it names at least one host. Every name it carries is cluster-internal: a DNS name under `.svc`, `.local` or `.internal`, or a private IP address (RFC 1918 or IPv6 ULA). Workloads pin it as `kbs_cert` on top of their system CAs (§1), so a name that a public CA would certify lets that CA's customers impersonate Trustee. The guest's rustls refuses a CA certificate as a server's own. *(Ticket 18.)*
 5. **Share payload**: the plaintext of the KBS resource that the Operator Verifier serves:
    `{"version":1,"key_id":"…","index":1,"share":"…","bundle_sha256":"…"}`.
    It travels only as Trustee's standard JWE to the attested `tee-pubkey`.
@@ -274,7 +275,7 @@ test/e2e/                # kind + Kata + swtpm, end to end
 | AT-24 | Workloads attest to unlocked Trustee | An authorized workload receives the sealed resources under the sealed policy; an unauthorized one is refused; Trustee never falls back to its built-in default policy |
 | AT-25 | Full Unlock Ceremony through the helper's Service, with the pod not Ready | Operators reach the helper and unlock succeeds |
 | AT-26 | Helper crashes just before the rename, then just after it; separately, the Trustee container restarts | Before: retry wipes staging and needs a new ceremony. After: retry exits 0 without one. Trustee reuses the published tree |
-| AT-27 | A bundle failing each sealed-config check in turn: insecure flag, missing signer or unlisted certificate, missing, misplaced or default resource policy | `seal` refuses; the same bundle sealed with stock `age` is refused by the helper and nothing is published |
+| AT-27 | A bundle failing each sealed-config check in turn: insecure flag, missing signer or unlisted certificate, missing, misplaced or default resource policy, a TLS key or certificate that is missing or mismatched, a CA certificate, a certificate with no names, or one that names a public host or IP | `seal` refuses; the same bundle sealed with stock `age` is refused by the helper and nothing is published |
 | AT-28 | Evidence fixtures for every claim profile: matching, wrong Init-Data digest, debug on, a required claim missing | Only the matching evidence gets a release |
 
 ## 11. Definition of done
