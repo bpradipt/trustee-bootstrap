@@ -32,3 +32,4 @@ Then follow the runbook's *Roll back*.
 ## Results
 
 - 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **fail** at fault 2. Fault 1 held: Alice's v1 policy released nothing to the v2 pod. With v1's digest typed into the v2 pod and no new genpolicy, no policy event appeared and the helper ran. A follow-up test swapped in an image with an extra layer under unchanged Init-Data, and Alice's Share went to it. See [ticket 21](../tickets/21-pin-container-images-in-the-agent-policy.md): the Kata 4.2.0 agent policy doesn't pin a guest-pulled image.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`, with [ticket 21](../tickets/21-pin-container-images-in-the-agent-policy.md)'s `rules.rego` patch: **pass**. Fault 2 got `CreateContainerRequest is blocked by policy`, and the helper never ran.

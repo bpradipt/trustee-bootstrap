@@ -24,20 +24,27 @@ A real attacker puts their own binary at the helper's entrypoint path, with the 
 2. **Upstream.** Report the TODO to Kata with this test, and check whether a newer genpolicy validates `source`. Moving the Kata pin also moves every Init-Data digest.
 3. **Image signatures through CDH.** An `[image]` security policy in Init-Data, with signed images. This needs the policy and keys in the guest before the first pull, while the only KBS a CVM reaches before unlock is behind the relay.
 
-Option 1 can ship without upstream changes. Option 2 should happen anyway.
+Option 1 can ship without upstream changes.
 
 **Blocked by:** none. This blocks any production unlock, alongside ticket 17.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Spec:** §7 (Init-Data and the Kata Agent policy); `SECURITY_THREAT_MODEL.md` condition 2, the threat "Trustee replaced after unlock", residual risk "Init-Data is the single root"; AT-04.
 
-- [ ] Under unchanged Init-Data, a helper or Trustee container from any other image never starts. The agent refuses it with a policy event.
-- [ ] Security Operators can read the new rule when they review the Init-Data, and the runbook's review step says what to look for.
-- [ ] An e2e check runs the swap above, for both containers, and fails if either starts.
-- [ ] Spec §7 and the threat model say what pins the images, and since which version.
-- [ ] `test/e2e/ci.sh go`, `test/e2e/ci.sh lint <base>`, `test/e2e/golden-path.sh` and `test/e2e/evals-cluster.sh ev09` exit 0.
+- [x] Under unchanged Init-Data, a helper or Trustee container from any other image never starts. The agent refuses it with a policy event.
+- [x] Security Operators can read the new rule when they review the Init-Data, and the runbook's review step says what to look for.
+- [x] An e2e check runs the swap above, for both containers, and fails if either starts.
+- [x] Spec §7 and the threat model say what pins the images, and since which version.
+- [x] `test/e2e/ci.sh go`, `test/e2e/ci.sh lint <base>`, `test/e2e/golden-path.sh` and `test/e2e/evals-cluster.sh ev09` exit 0.
 
 ## Comments
 
 - **Found by EV-09, fault 2.** The eval put v1's helper digest into the v2 pod without running genpolicy again. It expected `CreateContainerRequest is blocked by policy` and saw no policy event at all. A test that swapped in an image with an extra layer under unchanged Init-Data then reproduced the full attack (steps above). Both runs used throwaway test keys, and the swapped image ran the real helper binary.
+- **Option 1, shipped.** `deploy/genpolicy/rules.rego.patch` adds `trustee_bootstrap_allow_image` to Kata 4.2.0's `rules.rego`, called from `CreateContainerRequest`. With guest pull, a workload container's `io.kubernetes.cri.image-name` annotation, its `image_guest_pull` storage's `source`, and the image name in that storage's metadata must all equal the image genpolicy recorded, digest included. The sandbox container has no image and passes. `trustee-cvm.sh` and the runbook patch `rules.rego` before genpolicy, so the rule travels in the Init-Data that Security Operators review and the CVM measures.
+- **No Kata change.** Decided 2026-11-12: the agent policy is a deployment-time choice. genpolicy's `rules.rego` is the deployer's to extend, so trustee-bootstrap keeps its rule as a patch and rechecks it when the Kata pin moves.
+- **Verified** on the scratch VM (kind + Kata 4.2.0 + swtpm), 2026-11-12, branch `evals-rest`:
+  - `test/e2e/trustee-cvm.sh`: PASS. Under the approved Init-Data, the helper from the approved image plus one layer got `CreateContainerRequest is blocked by policy` and never ran. With Trustee's image swapped the same way, Alice and Carol's Shares unlocked the helper, and the agent then refused the Trustee container. AT-13, AT-17, AT-24 and AT-26 still pass, so the rule accepts the approved images.
+  - `test/e2e/golden-path.sh`: PASS.
+  - `test/e2e/evals-cluster.sh ev09 ev05`: EV-09 passes, with fault 2 refused by policy. EV-05's new `upstream-rules` variant, Kata's rules without the patch, fails the runbook checklist's image-pinning line.
+  - `test/e2e/ci.sh go` and `test/e2e/ci.sh lint origin/main` exit 0. No Go changed. Shellcheck is clean on `trustee-cvm.sh` and `evals-cluster.sh`.

@@ -7,8 +7,10 @@
 #   AT-13   pod is not Ready; two Shares of 2-of-3 unlock it and Trustee starts
 #   AT-11   with another ceremony.json in the ConfigMap, the helper fails
 #           in LOCKED under the same pod and policy
-#   policy  genpolicy's agent policy denies exec, and a pod whose helper args
-#           differ from the policy's does not start
+#   policy  genpolicy's agent policy denies exec; a pod whose helper args
+#           differ from the policy's does not start, nor one whose helper
+#           or Trustee container runs another image under the same
+#           Init-Data (ticket 21)
 #   state   the memory state volume is a guest tmpfs that the host never sees
 #           and that survives the init-to-main handoff
 #   AT-17   a workload that pins Trustee's certificate (kbs_cert) gets the
@@ -73,21 +75,26 @@ cleanup() {
 # genpolicy, its rules and its settings, from the pinned Kata tools tarball.
 # One settings drop-in: the kind node's containerd 2.3 writes OCI spec
 # 1.3.0, and the stock settings expect 1.1.0, so the policy would refuse
-# every container.
+# every container. rules.rego is upstream's with deploy/genpolicy's patch,
+# which pins each container's image (ticket 21); rules.upstream.rego keeps
+# the pristine copy.
 genpolicy_tool() {
 	gp=$E2E_CACHE/out/genpolicy
 	mkdir -p "$gp/genpolicy-settings.d"
 	cp "$script_dir/genpolicy-kind.json" "$gp/genpolicy-settings.d/"
-	[[ -x $gp/genpolicy ]] && return
-	info "fetching genpolicy (Kata $KATA_TAG)"
-	local tarball=$E2E_CACHE/kata-tools-static-$KATA_TAG-amd64.tar.zst
-	curl -fsSLo "$tarball" "https://github.com/kata-containers/kata-containers/releases/download/$KATA_TAG/kata-tools-static-$KATA_TAG-amd64.tar.zst"
-	echo "$KATA_TOOLS_SHA256  $tarball" | sha256sum -c --quiet
-	mkdir -p "$gp"
-	tar --zstd -xf "$tarball" -C "$gp" --transform='s|.*/||' ./opt/kata/bin/genpolicy \
-		./opt/kata/share/defaults/kata-containers/rules.rego \
-		./opt/kata/share/defaults/kata-containers/genpolicy-settings.json
-	rm -f "$tarball"
+	if [[ ! -x $gp/genpolicy ]]; then
+		info "fetching genpolicy (Kata $KATA_TAG)"
+		local tarball=$E2E_CACHE/kata-tools-static-$KATA_TAG-amd64.tar.zst
+		curl -fsSLo "$tarball" "https://github.com/kata-containers/kata-containers/releases/download/$KATA_TAG/kata-tools-static-$KATA_TAG-amd64.tar.zst"
+		echo "$KATA_TOOLS_SHA256  $tarball" | sha256sum -c --quiet
+		mkdir -p "$gp"
+		tar --zstd -xf "$tarball" -C "$gp" --transform='s|.*/||' ./opt/kata/bin/genpolicy \
+			./opt/kata/share/defaults/kata-containers/rules.rego \
+			./opt/kata/share/defaults/kata-containers/genpolicy-settings.json
+		rm -f "$tarball"
+	fi
+	[[ -e $gp/rules.upstream.rego ]] || mv "$gp/rules.rego" "$gp/rules.upstream.rego"
+	patch -s -o "$gp/rules.rego" "$gp/rules.upstream.rego" "$repo/deploy/genpolicy/rules.rego.patch"
 }
 
 # A registry on the kind gateway, which the node's containerd may use over
@@ -409,6 +416,43 @@ check_tampered() {
 	info "policy: with --proxy-port changed, the agent refused to create the helper container"
 }
 
+# Ticket 21: the same pod and Init-Data, with one container's image, helper
+# or trustee, swapped for that image plus one layer. The agent policy
+# refuses it, so the host can't run unapproved code under the approved
+# measurement. Trustee's container starts only after the helper exits, so
+# the trustee case unlocks first.
+check_image_swap() {
+	local from=$helper_image status=initContainerStatuses swap events='' uid out holder
+	if [[ $1 == trustee ]]; then from=$KBS_IMAGE status=containerStatuses; fi
+	kc delete pod "$POD" --ignore-not-found --wait >/dev/null
+	mkdir -p "$work/swap"
+	echo "not the approved image" >"$work/swap/marker"
+	printf 'FROM %s\nCOPY marker /swap-marker\n' "$from" >"$work/swap/Containerfile"
+	eng build -q --tls-verify=false -f "$work/swap/Containerfile" -t "$registry/trustee-bootstrap/swap:$1" "$work/swap" >/dev/null
+	eng push -q --tls-verify=false --digestfile "$work/swap/digest" "$registry/trustee-bootstrap/swap:$1"
+	eng rmi "$registry/trustee-bootstrap/swap:$1" >/dev/null
+	swap=$registry/trustee-bootstrap/swap@$(cat "$work/swap/digest")
+	sed "s|$from|$swap|" "$work/trustee-cvm.yaml" | kc apply -f - >/dev/null
+	uid=$(kc get pod "$POD" -o jsonpath='{.metadata.uid}')
+	if [[ $1 == trustee ]]; then
+		wait_helper
+		for holder in alice carol; do
+			out=$(approve "$holder") || die "$holder's approve with Trustee's image swapped: $out"
+		done
+	fi
+	for _ in $(seq 90); do
+		events=$(kc get events --field-selector "involvedObject.uid=$uid" -o jsonpath='{.items[*].message}')
+		[[ $events == *CreateContainerRequest* ]] && break
+		sleep 2
+	done
+	[[ $events == *"CreateContainerRequest is blocked by policy"* ]] ||
+		die "the $1 container from another image ran under the approved Init-Data: ${events:0:2000}"
+	[[ -z $(kc get pod "$POD" -o jsonpath="{.status.${status}[0].state.running}") ]] ||
+		die "the $1 container runs from another image"
+	kc delete pod "$POD" --wait=false >/dev/null
+	info "policy: with only the $1 container's image swapped, the agent refused to create it"
+}
+
 # The same pod and policy, with another Key Ceremony's ceremony.json in the
 # manifest ConfigMap. The policy can't pin ConfigMap contents, so the helper
 # starts, and --manifest-sha256 makes it fail in LOCKED.
@@ -469,6 +513,8 @@ main() {
 	check_workloads
 	check_trustee_restart
 	check_tampered
+	check_image_swap helper
+	check_image_swap trustee
 	check_swapped_manifest
 	check_tmpfs
 	info "PASS"

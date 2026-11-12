@@ -18,6 +18,7 @@ Render `trustee-cvm.yaml` and extract `init.toml` as the Unlock Ceremony runbook
 | kbs-url | The KBS URL in `aa.toml` and `cdh.toml` points off the guest loopback |
 | sidecar | An extra container in the pod |
 | kbs-image | A KBS image digest other than the one in `docs/upstream-pins.md` |
+| upstream-rules | Kata's `rules.rego` as it ships, without `deploy/genpolicy/rules.rego.patch` |
 
 ## Action
 
@@ -38,3 +39,4 @@ The checklist has no line for the number of containers. The sidecar variant show
 
 - 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **fail**. The checklist caught seven of the eight variants but not the sidecar, which led to [ticket 22](../tickets/22-review-the-container-set.md).
 - 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`, with ticket 22's container-set check: **pass**. The unchanged Init-Data passed every check, and every variant failed at least one. The sidecar failed the container set, and the KBS image failed the KBS digest.
+- 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`, with ticket 21's `rules.rego` patch and its checklist line: **pass**. The new `upstream-rules` variant failed the image-pinning check.

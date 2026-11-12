@@ -191,6 +191,7 @@ checklist() {
 	[[ $(grep -o 'url = "[^"]*"' "$t" | sort -u) == 'url = "http://127.0.0.1:8081"' ]] || echo "KBS URL"
 	[[ $(grep -o '"io.kubernetes.cri.container-name": "[^"]*"' "$t" | cut -d'"' -f4 | sort -u | paste -sd' ') == "bootstrap-helper trustee" ]] ||
 		echo "container set"
+	grep -q trustee_bootstrap_allow_image "$t" || echo "image pinning rule"
 	return 0
 }
 
@@ -225,7 +226,9 @@ ev05_render() {
 	# Trustee's container from another image that the registry already holds.
 	kbs-image) sed -i "s|$KBS_IMAGE|$helper_image|" "$v/pod.yaml" ;;
 	esac
-	"$gp/genpolicy" -y "$v/pod.yaml" -p "$gp/rules.rego" -j "$v/settings" --initdata-path="$v/init-data.toml" \
+	local rules=$gp/rules.rego
+	[[ $1 != upstream-rules ]] || rules=$gp/rules.upstream.rego
+	"$gp/genpolicy" -y "$v/pod.yaml" -p "$rules" -j "$v/settings" --initdata-path="$v/init-data.toml" \
 		--insecure-registry="$registry" >"$v/genpolicy.log" 2>&1 || die "EV-05: genpolicy failed on $1: $(tail -3 "$v/genpolicy.log")"
 	extract_initdata "$v/pod.yaml" "$v/init.toml"
 }
@@ -241,7 +244,7 @@ ev05() {
 	other_sha256=$(sha256sum "$ev/other/ceremony.json" | cut -d' ' -f1)
 	# The pod before genpolicy, as render_pod builds it.
 	sed "s|@HELPER_IMAGE@|$helper_image|; s|@MANIFEST_SHA256@|$manifest_sha256|" "$examples/trustee-cvm.yaml" >"$ev/pod.yaml"
-	for name in base tag manifest owner exec logs kbs-url sidecar kbs-image; do
+	for name in base tag manifest owner exec logs kbs-url sidecar kbs-image upstream-rules; do
 		ev05_render "$name"
 		caught=$(checklist "$ev/$name/init.toml" | paste -sd, -)
 		if [[ $name == base ]]; then

@@ -99,7 +99,7 @@ The claim depends on seven conditions:
 | Host reads unlocked config | `medium: Memory` `emptyDir` (guest tmpfs) owned by Trustee's UID, no exec by agent policy | AT-16 |
 | **Unlocked Trustee runs its built-in default policy**, which releases every resource to any attested non-sample TEE | The sealed config points the KBS storage backend at the published tree, and the sealed-config checks require the resource policy at its exact key; sessions stay in memory | AT-24, AT-27 |
 | Operators can't reach the helper (Service routes only to Ready pods) | The helper's Service sets `publishNotReadyAddresses: true` | AT-25 |
-| Trustee replaced after unlock | Image digests and container set pinned by agent policy | AT-04 |
+| Trustee replaced after unlock, or the helper replaced before it | Image digests and the container set pinned by the agent policy. Kata 4.2.0's rules leave a guest-pulled image unchecked, so trustee-bootstrap patches them with a rule that pins each image by digest (ticket 21) | AT-04 |
 | Partial or corrupt unseal | Authenticated age decryption, safe tar extraction, atomic rename, fail closed | AT-14 |
 | An impostor serves workloads as Trustee | Once the sealing machine destroys its plaintext, Trustee's TLS key exists only in the Sealed Bundle, and workloads add its certificate as a trust root. Its certificate names a cluster-internal host or private IP, so no public CA will issue a competing one. `seal` and the Bootstrap Helper refuse a certificate that names any other host (sealed-config check 4) | AT-17, AT-27 |
 

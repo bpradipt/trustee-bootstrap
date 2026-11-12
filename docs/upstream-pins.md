@@ -84,6 +84,8 @@ Re-check each digest with `skopeo inspect` once you have registry access, and fi
 
 The release API lists these digests. We downloaded the tools tarball and checked its hash ourselves. Kata 4.2.0 publishes the tools tarball for amd64 only.
 
+We don't use the tarball's `rules.rego` as it ships. `deploy/genpolicy/rules.rego.patch` adds a rule that pins each container's image (ticket 21): Kata 4.2.0 checks neither the image annotation's value nor the `source` of an `image_guest_pull` storage. The patch is written against this release's `rules.rego`, so moving the Kata pin means checking the patch still applies and the rule still holds.
+
 Source: https://api.github.com/repos/kata-containers/kata-containers/releases/tags/4.2.0
 
 ## What the pinned KBS image contains
