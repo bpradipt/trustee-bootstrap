@@ -10,7 +10,9 @@ Terms in **bold** are defined in `GLOSSARY.md`. Design rationale lives in the AD
 
 ![Unlock Ceremony](docs/diagrams/unlock-ceremony.drawio.svg)
 
-Diagram source: `docs/diagrams/trustee-bootstrap.drawio` (page 1 is the Unlock Ceremony, page 2 is Setup). The SVGs embed the diagram, so either file opens in draw.io for editing.
+![Components](docs/diagrams/components.drawio.svg)
+
+Diagram source: `docs/diagrams/trustee-bootstrap.drawio` (page 1 is the Unlock Ceremony, page 2 is Setup, page 3 is Components). The SVGs embed the diagram, so any of these files opens in draw.io for editing.
 
 ## 0. Mission and constraints
 

@@ -17,6 +17,12 @@ Terms in **bold** are defined in [`GLOSSARY.md`](GLOSSARY.md).
 
 Nothing on the host ever sees a Share, the key or the plaintext config. [`SECURITY_THREAT_MODEL.md`](SECURITY_THREAT_MODEL.md) lists the claims and their limits.
 
+### What runs where
+
+![Components: what runs where, in what form, and who builds it](docs/diagrams/components.drawio.svg)
+
+This repo builds two things: the `trustee-bootstrap` CLI and the `bootstrap-helper` image. Everything that checks attestation evidence is upstream code, unmodified: the Operator Verifier and the unlocked Trustee run the same pinned Trustee KBS image, and AA and CDH come from guest-components.
+
 ### See it run
 
 ![A recorded Unlock Ceremony on kind + Kata + swtpm](docs/demo/unlock-ceremony.gif)
