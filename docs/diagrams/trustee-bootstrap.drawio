@@ -20,7 +20,7 @@
           <mxGeometry x="270" y="260" width="110" height="80" as="geometry"/>
         </mxCell>
         <mxCell id="appraise" value="&lt;b&gt;5&lt;/b&gt; Appraise evidence against the Operator Policy:&lt;br&gt;TEE type, reference values, Init-Data digest, debug off.&lt;br&gt;Only then release JWE{index, share, bundle_sha256}&lt;br&gt;to the attested tee-pubkey." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="40" y="355" width="340" height="75" as="geometry"/>
+          <mxGeometry x="80" y="355" width="300" height="80" as="geometry"/>
         </mxCell>
         <mxCell id="coll" value="Intel PCS / PCCS, AMD KDS&lt;br&gt;or offline collateral (outbound)" style="rounded=1;dashed=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="40" y="520" width="200" height="50" as="geometry"/>
@@ -55,19 +55,19 @@
         <mxCell id="cdh" value="&lt;b&gt;CDH / AA&lt;/b&gt;&lt;br&gt;(stock CoCo)&lt;br&gt;RCAR client,&lt;br&gt;holds TEE key" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="950" y="235" width="125" height="80" as="geometry"/>
         </mxCell>
-        <mxCell id="tmpfs" value="state volume: emptyDir medium: Memory (guest tmpfs)" style="shape=cylinder3;boundedLbl=1;size=6;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+        <mxCell id="tmpfs" value="state volume (guest tmpfs)&lt;br&gt;emptyDir, medium: Memory" style="shape=cylinder3;boundedLbl=1;size=6;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="675" y="430" width="250" height="50" as="geometry"/>
         </mxCell>
         <mxCell id="trustee" value="&lt;b&gt;Trustee&lt;/b&gt; (main container, unmodified)&lt;br&gt;holds Trustee TLS key from the bundle" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="675" y="510" width="250" height="60" as="geometry"/>
         </mxCell>
-        <mxCell id="wl" value="&lt;b&gt;Confidential workloads&lt;/b&gt;&lt;br&gt;carry Trustee certpin Trustee cert&lt;br&gt;in their Init-Datalt;br&gt;in their Init-Data" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+        <mxCell id="wl" value="&lt;b&gt;Confidential workloads&lt;/b&gt;&lt;br&gt;carry Trustee cert&lt;br&gt;in their Init-Data" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="1120" y="505" width="160" height="70" as="geometry"/>
         </mxCell>
         <mxCell id="legend" value="Solid arrows: steps in order. Dashed: the RCAR byte stream (guest proxy to relay to CLI to Operator Verifier), never parsed in between. No listener on the operator machine is reachable from outside." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;fontStyle=2;" vertex="1" parent="1">
           <mxGeometry x="20" y="620" width="1260" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="e1" value="1 start, serving&lt;br&gt;own Share payload" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;" edge="1" parent="1" source="cli" target="ov">
+        <mxCell id="e1" value="1 start" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cli" target="ov">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="140" y="220"/>
@@ -77,52 +77,55 @@
         <mxCell id="e1b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;dashed=1;" edge="1" parent="1" source="pol" target="cli">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e2" value="2 open relay&lt;br&gt;(outbound WebSocket)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;" edge="1" parent="1" source="cli" target="svc">
-          <mxGeometry relative="1" as="geometry">
+        <mxCell id="e2" value="2 open relay" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cli" target="svc">
+          <mxGeometry x="0.1" relative="1" as="geometry">
+            <mxPoint as="offset" x="0" y="-12"/>
             <Array as="points">
-              <mxPoint x="420" y="150"/>
-              <mxPoint x="420" y="220"/>
+              <mxPoint x="530" y="150"/>
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="e2b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="svc" target="relay">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e3" value="3 GET /cdh/resource/&lt;br&gt;trustee-bootstrap/share/current" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="relay" target="cdh">
-          <mxGeometry relative="1" as="geometry">
+        <mxCell id="e3" value="3 GET Share" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="relay" target="cdh">
+          <mxGeometry x="0.5" relative="1" as="geometry">
+            <mxPoint as="offset" x="0" y="-14"/>
             <Array as="points">
               <mxPoint x="1012" y="210"/>
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="e4" value="4 RCAR" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;dashed=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cdh" target="proxy">
-          <mxGeometry relative="1" as="geometry"/>
+          <mxGeometry x="0.9" relative="1" as="geometry">
+            <mxPoint as="offset" x="-30" y="26"/>
+          </mxGeometry>
         </mxCell>
         <mxCell id="e4b" value="" style="html=1;endArrow=block;dashed=1;" edge="1" parent="1" source="proxy" target="relay">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e4c" value="4 RCAR bytes to 127.0.0.1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;dashed=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cli" target="ov">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="60" y="220"/>
-            </Array>
-          </mxGeometry>
+        <mxCell id="e4c" value="4 RCAR" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;dashed=1;labelBackgroundColor=#ffffff;exitX=0.0588;exitY=1;exitDx=0;exitDy=0;entryX=0.1;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="cli" target="ov">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;dashed=1;" edge="1" parent="1" source="ov" target="coll">
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;dashed=1;exitX=0.1;exitY=1;exitDx=0;exitDy=0;entryX=0.1;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ov" target="coll">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
         <mxCell id="e6" value="6 decrypted&lt;br&gt;payload" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cdh" target="checks">
-          <mxGeometry relative="1" as="geometry">
+          <mxGeometry x="0.3" relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1012" y="352"/>
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e0" value="read; verified&lt;br&gt;by digest" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cms" target="checks">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="e0" value="read, checked&lt;br&gt;by digest" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cms" target="checks">
+          <mxGeometry x="-1" relative="1" as="geometry">
+            <mxPoint as="offset" x="-80" y="58"/>
+          </mxGeometry>
         </mxCell>
         <mxCell id="e7" value="7 at K Shares: publish atomically" style="html=1;fontSize=11;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="checks" target="tmpfs">
-          <mxGeometry relative="1" as="geometry"/>
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" x="0" y="8"/>
+          </mxGeometry>
         </mxCell>
         <mxCell id="e8" value="8 sealed config and state" style="html=1;fontSize=11;endArrow=block;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="tmpfs" target="trustee">
           <mxGeometry relative="1" as="geometry"/>
