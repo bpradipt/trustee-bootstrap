@@ -109,7 +109,12 @@ install_kata() {
 	sudo cat "$out/ext/kata-containers-coco-extension.img" |
 		node dd status=none of=/opt/kata/share/kata-containers/coco-extension-tpm.img
 	eng cp "$script_dir/qemu-swtpm" "$CLUSTER-control-plane:/opt/kata/bin/qemu-swtpm"
+	# With guest pull, creating a container includes pulling its image in
+	# the guest. At 60 s, a slow link to the registry times out the
+	# Trustee container's first create, and the kubelet restarts it. The
+	# kubelet caps this at its runtime-request-timeout, 2 min by default.
 	sed -e '0,/^path = /s|^path = .*|path = "/opt/kata/bin/qemu-swtpm"|' \
+		-e 's|^create_container_timeout = .*|create_container_timeout = 120|' \
 		-e 's|^valid_hypervisor_paths = .*|valid_hypervisor_paths = ["/opt/kata/bin/qemu-swtpm"]|' \
 		-e 's|^kernel = .*|kernel = "/opt/kata/share/kata-containers/vmlinuz-tpm"|' \
 		-e "s|^default_memory = .*|default_memory = $GUEST_MEMORY_MB|" \
@@ -118,6 +123,7 @@ install_kata() {
 		-e "s|^verity_params = .*|verity_params = \"$verity\"|" \
 		"$out/kata/configuration-qemu-coco-dev-runtime-rs.toml" | node dd status=none of="$cfg"
 	node grep -q '^experimental = \["force_guest_pull"\]' "$cfg" || die "config edit failed"
+	node grep -q '^create_container_timeout = 120$' "$cfg" || die "config edit failed"
 	node grep -q '^path = "/opt/kata/share/kata-containers/coco-extension-tpm.img"' "$cfg" || die "config edit failed"
 
 	if ! node grep -q "runtimes.$RUNTIME_CLASS\]" /etc/containerd/config.toml; then
