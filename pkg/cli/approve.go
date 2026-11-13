@@ -75,9 +75,10 @@ func newApproveCmd(e env) *cobra.Command {
 				return err
 			}
 			opts.KBSBinary = kbsBinary
-			// SIGINT and SIGTERM cancel the context, so the Operator
-			// Verifier stops and its run directory goes (AT-18).
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			// SIGINT, SIGTERM and SIGHUP (a closed terminal) cancel the
+			// context, so the Operator Verifier stops and its run directory
+			// goes (AT-18).
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			defer stop()
 			log := audit.New(cmd.ErrOrStderr()).With("index", share.Index, "key_id", share.KeyID, "endpoint", endpoint)
 			err = e.approve(ctx, endpoint, share, opts, limits, log)
@@ -165,6 +166,9 @@ func (e env) approve(ctx context.Context, endpoint string, share ceremony.ShareF
 	if slices.Contains(st.Accepted, share.Index) {
 		return fmt.Errorf("index %d already accepted this boot", share.Index)
 	}
+	// An earlier run that died left its Share payload on this machine
+	// until now: say so.
+	opts.Swept = func(run string) { log.Warn(audit.VerifierSwept, "run", run) }
 	addr, stop, err := e.startVerifier(ctx, verifierAddress, opts)
 	if err != nil {
 		return fmt.Errorf("start Operator Verifier: %w", err)

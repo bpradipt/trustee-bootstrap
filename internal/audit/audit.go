@@ -19,6 +19,7 @@ const (
 	RelayOpened     = "relay_opened"     // helper and approve
 	RelayClosed     = "relay_closed"     // helper and approve: code, reason or error
 	RelayEnded      = "relay_ended"      // helper: the relay stopped carrying bytes; error
+	VerifierSwept   = "verifier_swept"   // approve, a warning: run, an earlier run that died without stopping, now removed
 	VerifierStarted = "verifier_started" // approve: address
 	VerifierStopped = "verifier_stopped" // approve: error if the run directory was not wiped
 	ApproveResult   = "approve_result"   // approve: accepted, error

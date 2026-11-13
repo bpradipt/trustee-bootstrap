@@ -25,7 +25,7 @@ These tickets cut [`IMPLEMENTATION_SPEC.md`](../../IMPLEMENTATION_SPEC.md) into 
 | 17 | [Real-TEE release gate](17-real-tee-release-gate.md) | **open** | a run on real TDX, SNP or Azure vTPM hardware |
 | 18 | [Check Trustee's TLS certificate when sealing](18-check-trustee-tls-certificate.md) | done | |
 | 19 | [Keep sealed secrets out of shell history](19-keep-secrets-out-of-shell-history.md) | done | |
-| 20 | [Clean up after a killed approve](20-clean-up-after-a-killed-approve.md) | ready-for-agent | found by EV-12 |
+| 20 | [Clean up after a killed approve](20-clean-up-after-a-killed-approve.md) | done | found by EV-12 |
 | 21 | [Pin container images in the Kata Agent policy](21-pin-container-images-in-the-agent-policy.md) | done | found by EV-09; `deploy/genpolicy/rules.rego.patch` pins each container's image in the agent policy |
 | 22 | [Review the Trustee CVM's container set](22-review-the-container-set.md) | done | |
 | 23 | [Build the e2e guest artifacts once and pull them from ghcr.io](23-prebuilt-e2e-guest-image.md) | in-progress | the first publish and making the package public, after merge |

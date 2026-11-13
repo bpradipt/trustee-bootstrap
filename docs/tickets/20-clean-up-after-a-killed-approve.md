@@ -22,15 +22,29 @@ The first two options together close the gap. The third is cheap and helps with 
 
 **Blocked by:** none
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Spec:** §0 requirement 3, §10 AT-18; [EV-12](../evals/12-approve-killed.md).
 
-- [ ] After a SIGKILL to `approve`, no Operator Verifier container or listener remains within a few seconds.
-- [ ] The next `approve` removes an earlier run's directory and container before it starts its own.
-- [ ] EV-12 passes (`test/e2e/evals-cluster.sh ev12`).
-- [ ] `test/e2e/ci.sh go`, `test/e2e/ci.sh lint <base>` and `test/e2e/golden-path.sh` exit 0.
+- [x] After a SIGKILL to `approve`, no Operator Verifier container or listener remains within a few seconds.
+- [x] The next `approve` removes an earlier run's directory and container before it starts its own.
+- [x] EV-12 passes (`test/e2e/evals-cluster.sh ev12`).
+- [x] `test/e2e/ci.sh go`, `test/e2e/ci.sh lint <base>` and `test/e2e/golden-path.sh` exit 0.
 
 ## Comments
 
 - EV-12 on the scratch VM (kind + Kata 4.2.0 + swtpm, rootless podman for the Operator Verifier) found, after the SIGKILL and again after a second `approve`: a listener on `127.0.0.1:46665`; the run directory `/run/user/1000/trustee-bootstrap-verifier-1813350249`, with the Share payload; and the KBS container `5afefdaacda8`. The eval removed them afterwards.
+- **The first EV-12 evidence was flawed.** The eval started `approve` as `tb approve ... &`, and `tb` is a shell function. Bash runs a backgrounded function in a subshell, so `kill -9 $!` killed that subshell and `approve` kept running. The leftovers it reported belonged to a live `approve`. The gap is still real: with `Pdeathsig` removed, `TestKBSGetsSIGTERMWhenApproveIsKilled` fails, because a KBS whose starter is SIGKILLed keeps running. EV-12 now starts the binary itself, as AT-18's `signal_approve` in `share-release.sh` already did.
+- **Built** both options, plus the runbook line:
+  - `pkg/verifier` starts the engine, or a native `kbs`, with `Pdeathsig: SIGTERM`. One goroutine, locked to its OS thread, starts it and waits for it, so the thread lives as long as the engine (golang/go#27505).
+  - Each run creates its directory under a hidden name, locks it with `flock`, then renames it to `trustee-bootstrap-verifier-*`. The container takes the same name. The kernel drops the lock however the process dies.
+  - Before it starts, `Start` sweeps: for each run directory or container with that prefix whose directory no live process holds, it removes the container first, then the directory. It refuses to start if it can't list, check or remove one. `approve` logs a `verifier_swept` warning for each.
+  - `approve` now also handles SIGHUP, so a closed terminal runs the normal cleanup.
+  - A setuid engine, such as `sudo podman`, clears `Pdeathsig`. Its container then waits for the next sweep. The runbook says so, and tells operators how to clean up by hand.
+- **Verified**, 2026-11-13, scratch VM (kind + Kata 4.2.0 + swtpm), branch `approve-cleanup`:
+  - `go test -race` passes for `pkg/verifier`, `pkg/cli` and `internal/audit`. The new tests cover the sweep, failures that stop `Start`, a live run left alone, and a SIGKILLed stand-in `approve` whose fake KBS gets SIGTERM. Removing the lock, or `Pdeathsig`, fails the matching test.
+  - `test/e2e/ci.sh go` and `test/e2e/ci.sh lint origin/main` exit 0. Gremlins: 23 mutants killed, none lived or uncovered.
+  - `test/e2e/share-release.sh` passes. AT-18 holds after SIGINT, SIGTERM, success and failure, and with a rootful engine.
+  - `test/e2e/evals-cluster.sh ev12` passes. 5 s after the SIGKILL, only the run directory remained. The second `approve` removed it and logged `verifier_swept`.
+  - `test/e2e/golden-path.sh` failed three times on 2026-11-13, each time on the Trustee container's one restart. Each time, the first create failed with the Kata Agent's `ttrpc err: Receive packet timeout`. That create includes the guest's pull of the KBS image, and the VM fetched from ghcr.io at 1.3 MB/s that day (68 MB in 51 s). The default `create_container_timeout` is 60 s.
+- **golden-path passes** once the swtpm test config sets `create_container_timeout = 120`, in its own commit on this branch: EV-16 to EV-19, with no Trustee restart. The kubelet caps the timeout at its 2 min `runtime-request-timeout`.

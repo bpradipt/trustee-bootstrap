@@ -25,8 +25,11 @@ After step 2, or at the latest when step 3 starts:
 
 ## Notes
 
-Expect a fail today. `pkg/verifier` starts the engine with `exec.CommandContext` and sets no `Pdeathsig`, and `approve` doesn't look for an earlier run's leftovers. The container keeps serving the Share payload on `127.0.0.1` until someone stops it, and the payload stays on the tmpfs until logout. A release still needs a passing attestation, so the exposure stays on the Security Operator's own workstation.
+Before [ticket 20](../tickets/20-clean-up-after-a-killed-approve.md), `pkg/verifier` set no `Pdeathsig` on the engine, and `approve` didn't look for an earlier run's leftovers. A SIGKILLed `approve` left its container serving the Share payload on `127.0.0.1`, and the payload stayed on the tmpfs until logout. The first run of this eval didn't show that, though: its `kill -9` missed `approve` (see Results).
+
+Now the kernel sends the engine SIGTERM when `approve` dies, so the container and the listener go within seconds. Each run holds its directory locked, and the next `approve` removes a directory that no live run holds, along with its container, and logs `verifier_swept`. The eval checks the container and the listener 5 s after the SIGKILL, and everything after the second `approve`. A setuid engine, such as `sudo podman`, clears `Pdeathsig`; with one, the container also waits for the next `approve`.
 
 ## Results
 
 - 2026-11-12, branch `evals-rest`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh`: **fail**, as expected. After the SIGKILL, and still after a second `approve`, three things remained: the KBS container, its listener on `127.0.0.1`, and the run directory holding the Share payload. See [ticket 20](../tickets/20-clean-up-after-a-killed-approve.md). The eval removes them afterwards.
+- 2026-11-13, branch `approve-cleanup`, scratch VM (kind + Kata 4.2.0 + swtpm), `test/e2e/evals-cluster.sh ev12`, with [ticket 20](../tickets/20-clean-up-after-a-killed-approve.md)'s fix: **pass**. 5 s after the SIGKILL, the run directory remained, without its container or listener. The second `approve` removed it and logged `verifier_swept`. This run also fixed the eval: before, `kill -9` reached a bash subshell, not `approve`, so the 2026-11-12 result above reflects a live `approve`.

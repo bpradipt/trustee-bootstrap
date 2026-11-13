@@ -145,7 +145,7 @@ leftovers() {
 # EV-12: SIGKILL reaches approve while its Operator Verifier runs.
 ev12() {
 	section "EV-12: approve killed with SIGKILL"
-	local ev=$work/ev12 listen=127.0.0.1:18090 approve addr rundir before dirs left
+	local ev=$work/ev12 listen=127.0.0.1:18090 approve addr rundir before dirs early left
 	mkdir -p "$ev"
 	baseline
 	fresh_pod
@@ -153,8 +153,11 @@ ev12() {
 	for _ in $(seq 30); do tb status --endpoint "http://$listen" >/dev/null 2>&1 && break; sleep 1; done
 	before=$(kbs_containers)
 	dirs=$(find "${XDG_RUNTIME_DIR:-/dev/shm}" -maxdepth 1 -name 'trustee-bootstrap-verifier-*' 2>/dev/null || true)
-	tb approve --endpoint "http://$listen" --policy "$work/policy-alice" --share-file "$work/ceremony/alice.share" \
-		>"$ev/approve.out" 2>"$ev/approve.err" &
+	# The binary itself, not the tb function: bash runs a backgrounded
+	# function in a subshell, so $! would be that subshell, and kill -9
+	# would leave approve running.
+	"$work/bin/trustee-bootstrap" approve --endpoint "http://$listen" --policy "$work/policy-alice" \
+		--share-file "$work/ceremony/alice.share" >"$ev/approve.out" 2>"$ev/approve.err" &
 	approve=$!
 	for _ in $(seq 60); do grep -q relay_opened "$ev/approve.err" && break; sleep 1; done
 	grep -q relay_opened "$ev/approve.err" || die "EV-12: approve never opened the relay: $(tail -3 "$ev/approve.err")"
@@ -164,15 +167,22 @@ ev12() {
 	wait "$approve" 2>/dev/null || true
 	sleep 5
 	info "EV-12: after SIGKILL: $(leftovers "$addr" "$rundir" "$before" | paste -sd';' | sed 's/^$/nothing left/')"
+	# The kernel stops the engine at once (Pdeathsig). Only the run
+	# directory may wait for the next approve's sweep.
+	early=$(leftovers "$addr" "" "$before")
 
 	# Step 3: a second approve, against the real helper this time.
-	approve_ok alice 1
+	expect_swept=1 approve_ok alice 1
+	[[ -z $rundir || $out == *'"msg":"verifier_swept"'*"\"run\":\"${rundir##*/}\""* ]] ||
+		die "EV-12: the second approve logged no sweep of ${rundir##*/}"
+	info "EV-12: the second approve swept ${rundir##*/} and logged verifier_swept"
 	left=$(leftovers "$addr" "$rundir" "$before")
 	# Clean up whatever the killed run left, so later evals start clean.
 	for c in $(kbs_containers); do
 		grep -qx "$c" <<<"$before" || podman rm -f "$c" >/dev/null 2>&1 || true
 	done
 	[[ -z $rundir ]] || rm -rf "$rundir"
+	[[ -z $early ]] || die "EV-12: 5 s after SIGKILL, these remain: $(paste -sd';' <<<"$early")"
 	[[ -z $left ]] || die "EV-12: after SIGKILL and a second approve, these remain: $(paste -sd';' <<<"$left")"
 	info "EV-12: pass"
 }

@@ -21,7 +21,7 @@ A cluster that refuses everything passes every negative eval. The healthy-path e
 | EV-09 | [Upgrade the Bootstrap Helper and roll back](09-helper-upgrade-and-rollback.md) | upgrade | `evals-cluster.sh` | pass, 2026-11-12 |
 | EV-10 | [Roster change locks out a departed operator](10-roster-change.md) | roster change | `evals-cluster.sh` | pass, 2026-11-12 |
 | EV-11 | [Pod recreation after unlock forgets everything](11-pod-recreation-after-unlock.md) | partial failure | `evals.sh` | pass, 2026-11-12 |
-| EV-12 | [`approve` killed with SIGKILL](12-approve-killed.md) | partial failure | `evals-cluster.sh` | fail (ticket 20), 2026-11-12 |
+| EV-12 | [`approve` killed with SIGKILL](12-approve-killed.md) | partial failure | `evals-cluster.sh` | pass, 2026-11-13 |
 | EV-13 | [Relay cut after release](13-relay-cut-after-release.md) | partial failure | `evals-cluster.sh` | pass, 2026-11-12 |
 | EV-14 | [Broken sealed resource policy](14-broken-sealed-policy.md) | partial failure | `evals-cluster.sh` | pass, 2026-11-12 |
 | EV-15 | [Canary sweep after a full unlock](15-canary-sweep.md) | secret hygiene | `evals.sh` | pass, 2026-11-12 |
@@ -76,7 +76,7 @@ test/e2e/evals-offline.sh              # EV-07 and EV-08
 test/e2e/evals-offline.sh ev07
 ```
 
-`test/e2e/evals-cluster.sh` runs the other cluster evals, EV-02 to EV-06, EV-09, EV-10 and EV-12 to EV-14, after one shared setup. Each eval runs in its own subshell, so one failure doesn't stop the rest, and the summary names every eval that failed. EV-12 fails today, on ticket 20.
+`test/e2e/evals-cluster.sh` runs the other cluster evals, EV-02 to EV-06, EV-09, EV-10 and EV-12 to EV-14, after one shared setup. Each eval runs in its own subshell, so one failure doesn't stop the rest, and the summary names every eval that failed.
 
 ```sh
 test/e2e/evals-cluster.sh              # all ten
