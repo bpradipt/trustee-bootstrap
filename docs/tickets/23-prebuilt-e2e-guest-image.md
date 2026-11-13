@@ -30,7 +30,7 @@ A PR that changes the tag finds no image and builds once. After the merge, the w
 
 **Blocked by:** none
 
-**Status:** in-progress
+**Status:** done
 
 **Spec:** §0 requirement 7 (pin every upstream version); `docs/ci.md`; `docs/upstream-pins.md`.
 
@@ -38,7 +38,7 @@ A PR that changes the tag finds no image and builds once. After the merge, the w
 - [x] With no image for the tag, `up` builds the files as before, and `kind-kata-swtpm.sh publish` packs and pushes them.
 - [x] A changed pin changes the tag, and `up` replaces a local cache built for the old one.
 - [x] `test/supplychain` exempts only the e2e guest repository, and fails if `versions.yaml` and `docs/upstream-pins.md` disagree.
-- [ ] After the merge, the workflow publishes the image, and the package is public.
+- [x] After the merge, the workflow publishes the image, and the package is public.
 - [x] `test/e2e/ci.sh go`, `test/e2e/ci.sh lint <base>` and `test/e2e/golden-path.sh` exit 0.
 
 ## Comments
@@ -55,3 +55,5 @@ A PR that changes the tag finds no image and builds once. After the merge, the w
 - **Cold build in CI**, PR run 43253675354, 2026-11-12. ghcr.io had no image for the tag, so `up` built everything itself: the kernel from 15:59 to 16:10, the AA until 16:18, then the extension and the kata-static files. `share-release.sh` passed on those files. In `trustee-cvm.sh`, so did AT-13's TPM-attested unlock and the policy checks.
 - **A race in that run.** AT-21 then failed with `connection refused` to Trustee's ClusterIP, 0.83 s after the pod turned Ready. kube-proxy routes a Service a moment after its pod turns Ready, and this runner reached the check sooner than the VM ever had. `check_host_attacks` now waits until the node can open a TCP connection to the Service.
 - **First publish failed**, `main` run 43271785832, 2026-11-12. The build passed, but the push to `ghcr.io/confidential-devhub/...` was refused: `denied: permission_denied: The requested installation does not exist`. The repository runs as `bpradipt/trustee-bootstrap`, and a workflow token pushes only under its own owner. Both workflows now set `E2E_GUEST_IMAGE` to `ghcr.io/<repository owner>/trustee-bootstrap-e2e-guest`. On the VM, a publish to a local registry under a mixed-case owner pushed the lowercased name, with `GITHUB_REPOSITORY` in the source label. `golden-path.sh` passed.
+- **Published**, 2026-11-13. After `e2e-guest-owner` merged, `e2e-guest` run 43343844686 built and pushed `ghcr.io/bpradipt/trustee-bootstrap-e2e-guest:d29170b0…`, the tag computed locally from the same files. An anonymous client fetched its manifest (HTTP 200), so the package is public and needed no settings change.
+- **Pulled in CI.** The `approve-cleanup` PR's `ci` run 43367685704 logged `using ghcr.io/bpradipt/trustee-bootstrap-e2e-guest:d29170b0…` and built no guest artifacts. That run took 5 min 39 s; the last `ci` run that built them, 43343844628, took 24 min.
