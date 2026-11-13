@@ -107,7 +107,7 @@ Each claim, invariant and residual risk in `SECURITY_THREAT_MODEL.md`, the tests
 | # | Invariant | Covered today | Gap | Eval |
 |---|---|---|---|---|
 | 1 | No Share before attestation | AT-03, AT-04, AT-28 (e2e) | A host that controls the relay can route one run's inner connections to several CVMs | EV-02 |
-| 2 | No key substitution | AT-05 (e2e, attacker `tee-pubkey`, `replay`) | | |
+| 2 | No key substitution | AT-05 (e2e, attacker `tee-pubkey`, `replay`), AT-29 (e2e, attacker `token`) | | |
 | 3 | Only genuine Shares | AT-07, AT-08 (`pkg/helper`) | A departed operator's old Share, at pod level | EV-10 |
 | 4 | Only the Approved Bundle | AT-09, AT-10, AT-23 (`pkg/helper`, `cmd/bootstrap-helper` only) | No pod-level run | EV-01, EV-09 |
 | 5 | Measured manifest | AT-11 (e2e `check_swapped_manifest`) | | |
