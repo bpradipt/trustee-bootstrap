@@ -29,6 +29,7 @@ These tickets cut [`IMPLEMENTATION_SPEC.md`](../../IMPLEMENTATION_SPEC.md) into 
 | 21 | [Pin container images in the Kata Agent policy](21-pin-container-images-in-the-agent-policy.md) | done | found by EV-09; `deploy/genpolicy/rules.rego.patch` pins each container's image in the agent policy |
 | 22 | [Review the Trustee CVM's container set](22-review-the-container-set.md) | done | |
 | 23 | [Build the e2e guest artifacts once and pull them from ghcr.io](23-prebuilt-e2e-guest-image.md) | done | |
+| 24 | [Keep Trustee available across replica restarts](24-trustee-availability.md) | needs-decision | ADR 0009: a quorum Unlock Ceremony for each replica, or replicas that unlock from a running one |
 
 Ticket 17 is the go/no-go. Until it passes, every claim profile stays untested and nobody runs a production unlock.
 
@@ -42,7 +43,7 @@ Ticket 17 is the go/no-go. Until it passes, every claim profile stays untested a
 
 ## Working a ticket
 
-Status moves `ready-for-agent` → `in-progress` → `done`. Take the lowest-numbered `ready-for-agent` ticket whose blockers are all `done`, and set it to `in-progress` before you start. Tick only the boxes you saw pass, and put the evidence in `## Comments`.
+Status moves `ready-for-agent` → `in-progress` → `done`. A `needs-decision` ticket waits for the project owner to choose between options in an ADR; it becomes `ready-for-agent` once the ADR records the choice. Take the lowest-numbered `ready-for-agent` ticket whose blockers are all `done`, and set it to `in-progress` before you start. Tick only the boxes you saw pass, and put the evidence in `## Comments`.
 
 Tickets 02 and 03 were tracer bullets: the whole Unlock Ceremony in one Go test, before any VM. Ticket 06 made it work on swtpm. Tickets 08 to 14 each added one hardening property, end to end.
 
