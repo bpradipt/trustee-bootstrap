@@ -83,6 +83,7 @@ The claim depends on seven conditions:
 |---|---|---|
 | A fake or modified CVM requests Shares | Operator Verifier resource policy requires an accepted TEE type, the expected Init-Data digest, matching reference values and debug off | AT-04 |
 | `tee-pubkey` substitution or evidence replay | Upstream RCAR binds the nonce and key into the evidence | AT-05 |
+| Relay holder replays the genuine CVM's attestation token or session cookie | The Operator Verifier answers only with a JWE to the TEE key that the token names. That key stays in the CVM, and each run has its own token signer | AT-29 |
 | **Relay holder forges an attestation token** naming its own TEE key | The Operator Verifier runs with `insecure_header_jwk = false` and trusts only the certificate of the signer the CLI generated for this run. The CLI refuses a config with that flag set | AT-21, AT-03 |
 | **Unlocked Trustee accepts forged tokens or unauthenticated admin calls**, because its sealed KBS config came from upstream's sample | `seal` and the Bootstrap Helper both run the sealed-config checks (spec §3): no insecure flags, a configured signer whose certificate KBS trusts | AT-21, AT-22, AT-27 |
 | Generic Init-Data or debug check rejects valid evidence, or accepts evidence missing a claim | One claim profile per TEE type; a missing required claim means deny | AT-28 |

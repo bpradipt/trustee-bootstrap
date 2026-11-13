@@ -15,6 +15,10 @@
 //	pass        relay the real helper's attestation untouched; record it
 //	tee-pubkey  relay it with the attacker's TEE key in place of the CVM's (AT-05)
 //	replay      relay it with the recorded attestation from pass (AT-05)
+//	token       relay it untouched, as pass does, keeping the attestation
+//	            token and the KBS session cookie that the Operator Verifier
+//	            hands the CVM. Once the helper ends its relay, send each in
+//	            the attacker's own resource request (AT-29)
 //	cut-attest  relay it, then drop approve's relay as the attestation answer
 //	            comes back (EV-13)
 //	cut-close   relay it, then drop approve's relay without a close frame
@@ -41,9 +45,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base32"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -60,13 +66,14 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/confidential-devhub/trustee-bootstrap/internal/memnet"
+	"github.com/confidential-devhub/trustee-bootstrap/pkg/ceremony"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/helper"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/relay"
 	"github.com/confidential-devhub/trustee-bootstrap/pkg/verifier"
 )
 
 var (
-	attack    = flag.String("attack", "", "forge, admin, hold, pass, tee-pubkey or replay")
+	attack    = flag.String("attack", "", "forge, admin, hold, pass, tee-pubkey, replay, token, cut-attest, cut-close or splice")
 	listen    = flag.String("listen", "", "pose as the Bootstrap Helper here and attack through the relay approve opens")
 	helperURL = flag.String("helper", "", "the real Bootstrap Helper")
 	kbsURL    = flag.String("kbs", "", "attack this KBS directly instead")
@@ -75,6 +82,7 @@ var (
 	ak        = flag.String("ak", "", "forge: the ak_public claim")
 	unchanged = flag.String("policy-unchanged", "", "admin through a relay: the Operator Verifier's resource policy must still equal this file")
 	evidence  = flag.String("evidence", "", "pass records the genuine attestation request here; replay sends it again")
+	shareFile = flag.String("share-file", "", "token: the operator's Share file; no answer to the attacker may hold its Share")
 	helpers   = flag.String("helpers", "", "splice: the real Bootstrap Helpers to relay to, comma-separated, in order")
 	forge     = flag.Bool("forge-status", false, "pass status through with a new boot_id and no accepted or rejected Shares")
 )
@@ -159,7 +167,7 @@ func onRelay(t *testing.T, ctx context.Context, ws *websocket.Conn) {
 	case "hold":
 		_, _, err := ws.Read(ctx)
 		t.Logf("approve left the relay: %v", err)
-	case "pass", "tee-pubkey", "replay", "cut-attest", "cut-close":
+	case "pass", "token", "tee-pubkey", "replay", "cut-attest", "cut-close":
 		manInTheMiddle(t, ctx, ws)
 	case "splice":
 		splice(t, ctx, ws)
@@ -279,6 +287,10 @@ func manInTheMiddle(t *testing.T, ctx context.Context, operator *websocket.Conn)
 		operator.CloseNow()
 		return
 	}
+	// approve keeps its Operator Verifier until the relay closes.
+	if *attack == "token" {
+		m.replayCredentials(verifierClient)
+	}
 	operator.Close(ce.Code, ce.Reason)
 	m.verdict()
 }
@@ -309,8 +321,10 @@ type tamperer struct {
 	t        *testing.T
 	cut      func() // cut-attest: drop approve's relay
 	mu       sync.Mutex
-	tampered int  // attestation requests rewritten (or recorded, for pass)
-	released bool // the Operator Verifier answered a resource request with 200
+	tampered int    // attestation requests rewritten (or recorded, for pass)
+	released bool   // the Operator Verifier answered a resource request with 200
+	token    string // token: the attestation token the CVM got
+	cookie   string // token: the KBS session cookie the CVM got
 }
 
 // serve runs the tampering proxy in front of the Operator Verifier that
@@ -372,7 +386,7 @@ func (m *tamperer) tamper(body []byte) ([]byte, bool) {
 		return nil, false
 	}
 	switch *attack {
-	case "pass":
+	case "pass", "token":
 		if err := os.WriteFile(*evidence, body, 0o600); err != nil {
 			m.t.Error(err)
 		}
@@ -411,10 +425,143 @@ func (m *tamperer) observe(resp *http.Response) error {
 		m.cut()
 		return errors.New("relay cut during attestation")
 	}
+	if *attack == "token" && resp.Request.URL.Path == "/kbs/v0/attest" && resp.StatusCode == http.StatusOK {
+		return m.capture(resp)
+	}
 	if strings.HasPrefix(resp.Request.URL.Path, "/kbs/v0/resource/") && resp.StatusCode == http.StatusOK {
 		m.released = true
 	}
 	return nil
+}
+
+// capture keeps the attestation token and the KBS session cookie that the
+// Operator Verifier hands the CVM, and passes the answer on intact. The
+// caller holds m.mu.
+func (m *tamperer) capture(resp *http.Response) error {
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("read the attestation answer: %w", err)
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	var answer struct {
+		Token string `json:"token"`
+	}
+	if json.Unmarshal(body, &answer) == nil {
+		m.token = answer.Token
+	}
+	var cookies []string
+	for _, c := range resp.Cookies() {
+		cookies = append(cookies, c.Name+"="+c.Value)
+	}
+	m.cookie = strings.Join(cookies, "; ")
+	m.t.Logf("token: kept the CVM's token (%t) and session cookie (%t)", m.token != "", m.cookie != "")
+	return nil
+}
+
+// replayCredentials sends the CVM's attestation token, then its session
+// cookie, in resource requests of the attacker's own (AT-29). The Operator
+// Verifier may answer, but only with a JWE to the TEE key that the
+// credential names, which stays in the CVM: no answer may hold the Share.
+func (m *tamperer) replayCredentials(c *http.Client) {
+	m.mu.Lock()
+	creds := map[string][2]string{}
+	if m.token != "" {
+		creds["the CVM's attestation token"] = [2]string{"Authorization", "Bearer " + m.token}
+	}
+	if m.cookie != "" {
+		creds["the CVM's session cookie"] = [2]string{"Cookie", m.cookie}
+	}
+	m.mu.Unlock()
+	if len(creds) == 0 {
+		m.t.Error("token: kept no attestation token or session cookie to replay")
+		return
+	}
+	share, ok := readShare(m.t)
+	if !ok {
+		return
+	}
+	for name, h := range creds {
+		code, body := fetchResource(m.t, c, h[0], h[1])
+		m.t.Logf("token: resource request with %s: HTTP %d, %d bytes, JWE %t", name, code, len(body), isJWE(body))
+		if code != http.StatusOK {
+			continue
+		}
+		// Lengths only: a failing body may be the Share itself.
+		if !isJWE(body) {
+			m.t.Errorf("token: %s got a %d-byte answer that is not a JWE", name, len(body))
+		}
+		if holdsShare(body, share) {
+			m.t.Errorf("token: %s got the Share in the clear", name)
+		}
+	}
+}
+
+// readShare reads the Share from -share-file, after checking that
+// holdsShare finds it in the plaintext Share payload, as KBS stores it.
+func readShare(t *testing.T) ([]byte, bool) {
+	b, err := os.ReadFile(*shareFile)
+	var sf ceremony.ShareFile
+	if err == nil {
+		err = json.Unmarshal(b, &sf)
+	}
+	if err != nil || len(sf.Share) == 0 {
+		t.Errorf("token: the Share file %q: %v", *shareFile, err)
+		return nil, false
+	}
+	plain, err := json.Marshal(ceremony.SharePayload{ShareFile: sf, BundleSHA256: "sha256"})
+	if err != nil || !holdsShare(plain, sf.Share) {
+		t.Errorf("token: holdsShare misses the Share in its own payload (%v)", err)
+		return nil, false
+	}
+	return sf.Share, true
+}
+
+// fetchResource asks the Operator Verifier for -resource, with one header.
+func fetchResource(t *testing.T, c *http.Client, header, value string) (int, []byte) {
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://operator-verifier/kbs/v0/resource/"+*resource, nil)
+	if err != nil {
+		t.Error(err)
+		return 0, nil
+	}
+	req.Header.Set(header, value)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Errorf("token: resource request: %v", err)
+		return 0, nil
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		t.Errorf("token: read the resource answer: %v", err)
+	}
+	return resp.StatusCode, body
+}
+
+// isJWE reports whether b is a KBS resource answer: a JWE in JSON form.
+func isJWE(b []byte) bool {
+	var j struct {
+		Protected  string `json:"protected"`
+		Ciphertext string `json:"ciphertext"`
+	}
+	return json.Unmarshal(b, &j) == nil && j.Protected != "" && j.Ciphertext != ""
+}
+
+// holdsShare reports whether b holds share raw, in hex or in base64.
+func holdsShare(b, share []byte) bool {
+	for _, enc := range []string{
+		string(share),
+		hex.EncodeToString(share),
+		base64.StdEncoding.EncodeToString(share),
+		base64.RawStdEncoding.EncodeToString(share),
+		base64.URLEncoding.EncodeToString(share),
+		base64.RawURLEncoding.EncodeToString(share),
+	} {
+		if strings.Contains(string(b), enc) {
+			return true
+		}
+	}
+	return false
 }
 
 // verdict judges the tampering attacks. The cut attacks only disturb the
@@ -428,9 +575,9 @@ func (m *tamperer) verdict() {
 	if m.tampered == 0 {
 		m.t.Errorf("%s: saw no attestation request", *attack)
 	}
-	if *attack == "pass" {
+	if *attack == "pass" || *attack == "token" {
 		if !m.released {
-			m.t.Error("pass: the genuine CVM got no release through the attacker, so the attacks prove nothing")
+			m.t.Errorf("%s: the genuine CVM got no release through the attacker, so the attacks prove nothing", *attack)
 		}
 		return
 	}

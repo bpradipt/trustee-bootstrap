@@ -277,6 +277,7 @@ test/e2e/                # kind + Kata + swtpm, end to end
 | AT-26 | Helper crashes just before the rename, then just after it; separately, the Trustee container restarts | Before: retry wipes staging and needs a new ceremony. After: retry exits 0 without one. Trustee reuses the published tree |
 | AT-27 | A bundle failing each sealed-config check in turn: insecure flag, missing signer or unlisted certificate, missing, misplaced or default resource policy, a TLS key or certificate that is missing or mismatched, a CA certificate, a certificate with no names, or one that names a public host or IP | `seal` refuses; the same bundle sealed with stock `age` is refused by the helper and nothing is published |
 | AT-28 | Evidence fixtures for every claim profile: matching, wrong Init-Data digest, debug on, a required claim missing | Only the matching evidence gets a release |
+| AT-29 | A relay holder replays the genuine CVM's attestation token, then its KBS session cookie, in its own resource request to the Operator Verifier | Any answer is a JWE to the CVM's TEE key; none holds the Share |
 
 ## 11. Definition of done
 

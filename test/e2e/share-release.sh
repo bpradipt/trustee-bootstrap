@@ -22,6 +22,9 @@
 #   AT-05  relaying the genuine CVM's attestation with the attacker's TEE
 #          key, or with evidence recorded from an earlier run: no release.
 #          The control run, relayed untouched, does get a release.
+#   AT-29  in that control run, the relay holder replays the CVM's genuine
+#          attestation token and KBS session cookie in its own resource
+#          requests: any answer is a JWE, and none holds the Share
 #
 # The Bootstrap Helper runs as a plain process in a busybox Kata pod, reached
 # through a NodePort. Its binary, the Ceremony Manifest and the Sealed Bundle
@@ -202,7 +205,7 @@ signal_approve() {
 	info "AT-18: after SIG$1, nothing of the Operator Verifier remains"
 }
 
-# relay_attacks: AT-21, AT-22 and AT-05 by a relay holder, against a helper
+# relay_attacks: AT-21, AT-22, AT-05 and AT-29 by a relay holder, against a helper
 # pod with the matching Init-Data. Ends with alice's Share accepted.
 relay_attacks() {
 	local out rootful_path=$PATH
@@ -222,12 +225,15 @@ relay_attacks() {
 	info "AT-22: the Operator Verifier refused both resource policy replacements, and its policy is unchanged"
 	info "AT-18: with a rootful engine, nothing of the Operator Verifier remains"
 
-	attacker pass -evidence "$work/evidence.json"
+	# The token attack relays untouched, as pass does, so it is also AT-05's
+	# control. Then it replays the CVM's token and session cookie.
+	attacker token -evidence "$work/evidence.json" -share-file "$work/ceremony/alice.share"
 	out=$(approve_via "http://$ATTACKER" alice) || die "AT-05 control: alice's approve through the untouched relay: $out"
 	[[ $out == accepted ]] || die "AT-05 control: alice's approve printed '$out'"
-	attacker_passed "AT-05 control"
+	attacker_passed "AT-05 control and AT-29"
 	status_is "COLLECTING [1]"
 	info "AT-05 control: relayed untouched by the relay holder, the genuine CVM got alice's Share"
+	info "AT-29: the relay holder replayed the CVM's credentials: $(grep -o 'resource request with [^:]*: HTTP [0-9]*, [0-9]* bytes, JWE [a-z]*' "$attacker_log" | paste -sd';')"
 
 	for attack in tee-pubkey replay; do
 		attacker "$attack" -evidence "$work/evidence.json"
