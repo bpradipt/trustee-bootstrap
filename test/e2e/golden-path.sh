@@ -87,6 +87,9 @@ approve_ok() {
 	((rc == 0)) || die "$1's approve failed"
 	[[ ${out##*$'\n'} == accepted ]] || die "$1's approve did not print accepted"
 	msgs=$(grep -o '"msg":"[a-z_]*"' <<<"$out" | cut -d'"' -f4 | paste -sd' ')
+	# Set expect_swept when this approve should first sweep a killed run
+	# (EV-12). Anywhere else, a sweep means an earlier step leaked.
+	[[ -z ${expect_swept:-} ]] || msgs=${msgs#verifier_swept }
 	[[ $msgs == "verifier_started relay_opened relay_closed verifier_stopped approve_result" ]] ||
 		die "$1's audit records: $msgs"
 	[[ $out == *'"index":'"$2,"*'"code":1000'*'"accepted":true'* ]] ||

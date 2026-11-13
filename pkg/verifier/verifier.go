@@ -16,12 +16,14 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -54,6 +56,9 @@ type Options struct {
 	ResourcePolicy  string           // Rego
 	ReferenceValues map[string][]any // loaded into the built-in RVPS
 	SharePayload    []byte
+	// Swept, if set, hears of each earlier run whose leftovers Start
+	// removed: its run directory, with its Share payload, and its container.
+	Swept func(run string)
 }
 
 // Runtime is how the Operator Verifier reaches the operator's machine.
@@ -76,25 +81,141 @@ func DefaultEngine() string {
 // Start runs the Operator Verifier on address (a 127.0.0.1 address; port 0
 // picks one) and returns the address it serves on once KBS answers. stop
 // ends KBS and deletes its run directory, which holds the Share payload; it
-// reports a delete that failed.
+// reports a delete that failed. Start first removes what earlier runs left
+// when they died without stopping.
 func (r Runtime) Start(ctx context.Context, address string, opts Options) (addr string, stop func() error, err error) {
 	parent := runtimeDir()
 	if err := checkTmpfs(parent); err != nil {
+		return "", nil, err
+	}
+	if err := r.sweep(ctx, parent, opts); err != nil {
 		return "", nil, err
 	}
 	addr, err = r.reservePort(address)
 	if err != nil {
 		return "", nil, err
 	}
-	dir, err := os.MkdirTemp(parent, "trustee-bootstrap-verifier-")
+	dir, lock, err := newRunDir(parent)
 	if err != nil {
-		return "", nil, fmt.Errorf("create run directory: %w", err)
+		return "", nil, err
+	}
+	// The lock goes once the run directory has: a run directory that this
+	// process failed to wipe stays for the next run's sweep.
+	release := func() error {
+		if err := wipe(dir); err != nil {
+			return err
+		}
+		return lock.Close()
 	}
 	end, err := r.launch(ctx, dir, addr, opts)
 	if err != nil {
-		return "", nil, errors.Join(err, wipe(dir))
+		return "", nil, errors.Join(err, release())
 	}
-	return addr, func() error { end(); return wipe(dir) }, nil
+	return addr, func() error { end(); return release() }, nil
+}
+
+// runPrefix names each run directory and the container that serves it, so a
+// later run can find what a killed one left.
+const runPrefix = "trustee-bootstrap-verifier-"
+
+// newRunDir creates a run directory and holds it locked (flock) while this
+// process lives; the kernel drops the lock when the process dies, however
+// it dies. The directory gets its sweepable name only once it is locked, so
+// a concurrent sweep never finds it unlocked.
+func newRunDir(parent string) (string, *os.File, error) {
+	tmp, err := os.MkdirTemp(parent, "."+runPrefix)
+	if err != nil {
+		return "", nil, fmt.Errorf("create run directory: %w", err)
+	}
+	lock, err := os.Open(tmp)
+	if err != nil {
+		return "", nil, fmt.Errorf("lock run directory: %w", err)
+	}
+	dir := filepath.Join(parent, strings.TrimPrefix(filepath.Base(tmp), "."))
+	if err := errors.Join(syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), os.Rename(tmp, dir)); err != nil {
+		return "", nil, errors.Join(fmt.Errorf("lock run directory: %w", err), lock.Close())
+	}
+	return dir, lock, nil
+}
+
+// sweep removes what earlier runs left when they died without stopping, by
+// SIGKILL, an OOM kill or a crash: each run directory that no live run
+// holds locked, with the Share payload in it, and the container named after
+// it.
+func (r Runtime) sweep(ctx context.Context, parent string, opts Options) error {
+	runs := map[string]bool{} // run name: a container has it
+	if opts.KBSBinary == "" {
+		var err error
+		if runs, err = r.runContainers(ctx); err != nil {
+			return err
+		}
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return fmt.Errorf("list earlier Operator Verifier runs: %w", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), runPrefix) {
+			runs[e.Name()] = runs[e.Name()] // keeps whether a container has it
+		}
+	}
+	for name, container := range runs {
+		if err := r.sweepRun(ctx, parent, name, container, opts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runContainers lists the containers named like a run directory, each
+// mapped to true.
+func (r Runtime) runContainers(ctx context.Context) (map[string]bool, error) {
+	out, err := exec.CommandContext(ctx, r.Engine, "ps", "-a", "--filter", "name="+runPrefix, "--format", "{{.Names}}").Output()
+	if err != nil {
+		return nil, fmt.Errorf("list the containers of earlier Operator Verifier runs: %w", err)
+	}
+	runs := map[string]bool{}
+	for _, name := range strings.Fields(string(out)) {
+		// The name becomes a path in sweepRun: one name, ours.
+		if strings.HasPrefix(name, runPrefix) && filepath.Base(name) == name {
+			runs[name] = true
+		}
+	}
+	return runs, nil
+}
+
+// sweepRun removes one earlier run's container and run directory, unless a
+// live run holds the directory. It holds the lock itself until it is done,
+// so a concurrent sweep skips this run.
+func (r Runtime) sweepRun(ctx context.Context, parent, name string, container bool, opts Options) error {
+	dir := filepath.Join(parent, name)
+	f, err := os.Open(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("check an earlier Operator Verifier run: %w", err)
+	}
+	// Without a run directory, only a container is left.
+	if err == nil {
+		defer f.Close()
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil // a live run
+		}
+		if err != nil {
+			return fmt.Errorf("check an earlier Operator Verifier run: %w", err)
+		}
+	}
+	if container {
+		if out, err := exec.CommandContext(ctx, r.Engine, "rm", "-f", name).CombinedOutput(); err != nil {
+			return fmt.Errorf("remove the container %s that an earlier Operator Verifier run left: %w: %s", name, err, out)
+		}
+	}
+	if err := wipe(dir); err != nil {
+		return err
+	}
+	if opts.Swept != nil {
+		opts.Swept(name)
+	}
+	return nil
 }
 
 // wipe deletes the run directory and its copy of the Share payload.
@@ -148,7 +269,7 @@ func checkTmpfs(dir string) error {
 // launch writes the run directory, starts KBS and waits until it answers.
 func (r Runtime) launch(ctx context.Context, dir, addr string, opts Options) (func(), error) {
 	cfg := DefaultConfig(containerRoot, net.JoinHostPort("0.0.0.0", containerPort))
-	args := []string{r.Engine, "run", "--rm", "-p", addr + ":" + containerPort,
+	args := []string{r.Engine, "run", "--rm", "--name", filepath.Base(dir), "-p", addr + ":" + containerPort,
 		"-v", dir + ":" + containerRoot + ":Z", Image,
 		"/usr/local/bin/kbs", "--config-file", filepath.Join(containerRoot, ConfigFile)}
 	if opts.KBSBinary != "" {
@@ -166,19 +287,36 @@ func (r Runtime) launch(ctx context.Context, dir, addr string, opts Options) (fu
 	// SIGTERM lets the engine stop and remove the container.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = time.Minute
+	// If this process dies without stopping KBS (SIGKILL, an OOM kill), the
+	// kernel sends the engine SIGTERM, as stop does. A setuid engine, such
+	// as sudo, clears this; the next run's sweep removes what it leaves.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 	// KBS output stays in memory and is shown only if KBS fails to start,
 	// before it has seen any evidence.
 	out := &tail{n: maxKBSOutput}
 	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Start(); err != nil {
+	started, exited := make(chan error, 1), make(chan struct{})
+	go func() {
+		defer close(exited)
+		// The kernel sends Pdeathsig when the thread that started the
+		// engine exits, not the process (golang/go#27505). This goroutine
+		// keeps its thread until the engine has exited: it never unlocks,
+		// so the thread ends only once Wait returns.
+		runtime.LockOSThread()
+		err := cmd.Start()
+		started <- err
+		if err == nil {
+			// Wait's error is KBS's exit status. stop's SIGTERM makes it
+			// non-zero on every run, and a KBS that dies before it answers
+			// shows up in waitReady with its output, so there is nothing
+			// more to report.
+			_ = cmd.Wait()
+		}
+	}()
+	if err := <-started; err != nil {
 		cancel()
 		return nil, fmt.Errorf("start KBS: %w", err)
 	}
-	exited := make(chan struct{})
-	// Wait's error is KBS's exit status. stop's SIGTERM makes it non-zero
-	// on every run, and a KBS that dies before it answers shows up in
-	// waitReady with its output, so there is nothing more to report.
-	go func() { _ = cmd.Wait(); close(exited) }()
 	end := func() { cancel(); <-exited }
 	if err := r.waitReady(ctx, addr, exited); err != nil {
 		end()

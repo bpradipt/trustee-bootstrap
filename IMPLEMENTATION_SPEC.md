@@ -266,7 +266,7 @@ test/e2e/                # kind + Kata + swtpm, end to end
 | AT-15 | Bootstrap Helper crash or restart before publication | New `boot_id`; earlier Shares gone; leftover staging directory removed |
 | AT-16 | Host reads the state volume | No plaintext (real-TEE release gate) |
 | AT-17 | Workload carries Trustee's certificate in its Init-Data and attests | Succeeds against the unlocked Trustee |
-| AT-18 | `approve` exits (success, failure or signal) | No listener, container or Share temp file remains |
+| AT-18 | `approve` exits (success, failure or signal), or is killed without cleanup (SIGKILL) | No listener, container or Share temp file remains. After a SIGKILL, the container and listener go within seconds, and the next `approve` removes the run directory *(ticket 20)* |
 | AT-19 | Second concurrent relay | `409` |
 | AT-20 | Relay idle, total-time, frame-size and connection-count limits | Enforced; relay closed |
 | AT-21 | A self-signed attestation token naming the attacker's TEE key, sent to the Operator Verifier through the relay, and to the unlocked Trustee | No release from either |

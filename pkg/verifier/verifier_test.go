@@ -1,20 +1,24 @@
 package verifier_test
 
 import (
+	"bufio"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -114,6 +118,30 @@ func fakeExecutable(t *testing.T, name, body string) string {
 	path := filepath.Join(t.TempDir(), name)
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.tmp\" && mv \"$0.tmp\" \"$0.args\"\n" + body + "\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// fakeEngine writes a container engine. ps prints <path>.ps, and fails once
+// that file is gone. rm logs its container to <path>.rm, and fails while
+// <path>.rmfail exists. run records its arguments, as fakeExecutable does,
+// and sleeps like KBS.
+func fakeEngine(t *testing.T, ps ...string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "podman")
+	script := `#!/bin/sh
+case "$1" in
+ps) cat "$0.ps"; exit ;;
+rm) echo "$3" >>"$0.rm"; test ! -e "$0.rmfail"; exit ;;
+esac
+printf '%s\n' "$@" > "$0.tmp" && mv "$0.tmp" "$0.args"
+exec sleep 60
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".ps", []byte(strings.Join(ps, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -313,7 +341,7 @@ func assertSigner(t *testing.T, keyPEM, certPEM []byte) {
 
 func TestStartContainer(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", tmpfsDir(t))
-	engine := fakeExecutable(t, "podman", "exec sleep 60")
+	engine := fakeEngine(t)
 
 	addr, stop, err := runtime(answering{engine}, engine).Start(t.Context(), "127.0.0.1:0", opts)
 	if err != nil {
@@ -325,8 +353,10 @@ func TestStartContainer(t *testing.T) {
 		}
 	})
 	args := recordedArgs(t, engine)
-	dir := strings.TrimSuffix(args[5], ":/etc/kbs:Z")
-	want := []string{"run", "--rm", "-p", addr + ":8080", "-v", dir + ":/etc/kbs:Z", verifier.Image,
+	dir := strings.TrimSuffix(args[7], ":/etc/kbs:Z")
+	// The container is named after its run directory, so a later run's
+	// sweep can find it (ticket 20).
+	want := []string{"run", "--rm", "--name", filepath.Base(dir), "-p", addr + ":8080", "-v", dir + ":/etc/kbs:Z", verifier.Image,
 		"/usr/local/bin/kbs", "--config-file", "/etc/kbs/kbs.toml"}
 	if !slices.Equal(args, want) {
 		t.Fatalf("engine args = %q\nwant %q", args, want)
@@ -338,6 +368,244 @@ func TestStartContainer(t *testing.T) {
 	if want := verifier.DefaultConfig("/etc/kbs", "0.0.0.0:8080"); !reflect.DeepEqual(got, want) {
 		t.Errorf("kbs.toml = %+v\nwant %+v", got, want)
 	}
+}
+
+// runPrefix names each run directory and its container.
+const runPrefix = "trustee-bootstrap-verifier-"
+
+// mkRun makes a run directory in parent with a stand-in Share payload.
+func mkRun(t *testing.T, parent, name string) string {
+	t.Helper()
+	dir := filepath.Join(parent, name)
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "share"), []byte("share"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// lockDir holds dir locked, as a live run does.
+func lockDir(t *testing.T, dir string) {
+	t.Helper()
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exists(t *testing.T, path string) bool {
+	t.Helper()
+	_, err := os.Stat(path)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return err == nil
+}
+
+// Ticket 20: a run that died without stopping (SIGKILL, an OOM kill) leaves
+// its run directory, with the Share payload, and maybe its container. The
+// next Start removes both and says so. It leaves alone a run that a live
+// process holds, a run directory not yet named, and anything not a run.
+func TestStartSweepsEarlierRuns(t *testing.T) {
+	runDirs := tmpfsDir(t)
+	t.Setenv("XDG_RUNTIME_DIR", runDirs)
+	stale := mkRun(t, runDirs, runPrefix+"stale")
+	lockDir(t, mkRun(t, runDirs, runPrefix+"live"))
+	keep := []string{filepath.Join(runDirs, runPrefix+"live"), mkRun(t, runDirs, "."+runPrefix+"new"), mkRun(t, runDirs, "other")}
+	engine := fakeEngine(t, runPrefix+"stale", runPrefix+"live", runPrefix+"gone", "other-container", runPrefix+"x/../../evil")
+	var swept []string
+	o := opts
+	o.Swept = func(run string) { swept = append(swept, run) }
+
+	_, stop, err := runtime(answering{engine}, engine).Start(t.Context(), "127.0.0.1:0", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	want := []string{runPrefix + "gone", runPrefix + "stale"}
+	if slices.Sort(swept); !slices.Equal(swept, want) {
+		t.Errorf("swept %q, want %q", swept, want)
+	}
+	b, err := os.ReadFile(engine + ".rm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := strings.Fields(string(b)); !slices.Equal(slices.Sorted(slices.Values(removed)), want) {
+		t.Errorf("containers removed: %q, want %q", removed, want)
+	}
+	if exists(t, stale) {
+		t.Error("the stale run directory, with its Share payload, survived")
+	}
+	for _, dir := range keep {
+		if !exists(t, dir) {
+			t.Errorf("%s was swept", dir)
+		}
+	}
+}
+
+// With a native KBS there is no container, and no engine to ask.
+func TestStartSweepsRunDirectoriesForANativeKBS(t *testing.T) {
+	runDirs := tmpfsDir(t)
+	t.Setenv("XDG_RUNTIME_DIR", runDirs)
+	stale := mkRun(t, runDirs, runPrefix+"stale")
+	kbs := fakeExecutable(t, "kbs", "exec sleep 60")
+	var swept []string
+	o := opts
+	o.KBSBinary = kbs
+	o.Swept = func(run string) { swept = append(swept, run) }
+
+	_, stop, err := runtime(answering{kbs}, "").Start(t.Context(), "127.0.0.1:0", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	if exists(t, stale) || !slices.Equal(swept, []string{runPrefix + "stale"}) {
+		t.Errorf("stale run directory left: %v, swept %q", exists(t, stale), swept)
+	}
+}
+
+// Start stops before it starts anything when it can't list, check or remove
+// what earlier runs left. A run directory goes only after its container,
+// which may still serve the Share payload.
+func TestStartStopsWhenItCannotSweep(t *testing.T) {
+	for name, tc := range map[string]struct {
+		breakSweep func(t *testing.T, engine, stale string)
+		want       string
+	}{
+		"ps fails": {func(t *testing.T, engine, _ string) {
+			if err := os.Remove(engine + ".ps"); err != nil {
+				t.Fatal(err)
+			}
+		}, "list the containers"},
+		"rm fails": {func(t *testing.T, engine, _ string) {
+			if err := os.WriteFile(engine+".rmfail", nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, "remove the container"},
+		"a run directory it can't open": {func(t *testing.T, _, stale string) {
+			if os.Getuid() == 0 {
+				t.Skip("root opens any directory")
+			}
+			if err := os.Chmod(stale, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(stale, 0o700); err != nil {
+					t.Error(err)
+				}
+			})
+		}, "check an earlier Operator Verifier run"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			runDirs := tmpfsDir(t)
+			t.Setenv("XDG_RUNTIME_DIR", runDirs)
+			stale := mkRun(t, runDirs, runPrefix+"stale")
+			engine := fakeEngine(t, runPrefix+"stale")
+			tc.breakSweep(t, engine, stale)
+
+			_, _, err := runtime(answering{engine}, engine).Start(t.Context(), "127.0.0.1:0", opts)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Start = %v, want %q", err, tc.want)
+			}
+			if !exists(t, stale) {
+				t.Error("the run directory went before its container")
+			}
+			if exists(t, engine+".args") {
+				t.Error("KBS started")
+			}
+		})
+	}
+}
+
+// A run holds its directory while it lives, so a second run's sweep leaves
+// the first alone.
+func TestStartLeavesALiveRunAlone(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", tmpfsDir(t))
+	var dirs []string
+	for _, name := range []string{"kbs1", "kbs2"} {
+		kbs := fakeExecutable(t, name, "exec sleep 60")
+		o := opts
+		o.KBSBinary = kbs
+		o.Swept = func(run string) { t.Errorf("swept the live run %s", run) }
+		_, stop, err := runtime(answering{kbs}, "").Start(t.Context(), "127.0.0.1:0", o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := stop(); err != nil {
+				t.Error(err)
+			}
+		})
+		dirs = append(dirs, filepath.Dir(recordedArgs(t, kbs)[1]))
+	}
+	for _, dir := range dirs {
+		if !exists(t, dir) {
+			t.Errorf("%s went while its run lives", dir)
+		}
+	}
+}
+
+// startAndHangEnv makes the test binary stand in for approve: it starts the
+// Operator Verifier with the fake KBS it names, says so, and waits to be
+// killed.
+const startAndHangEnv = "VERIFIER_TEST_START_AND_HANG"
+
+// AT-18 under SIGKILL (ticket 20): when the process that started the
+// Operator Verifier dies without stopping it, the kernel sends KBS, or the
+// engine, SIGTERM, as stop does.
+func TestKBSGetsSIGTERMWhenApproveIsKilled(t *testing.T) {
+	if kbs := os.Getenv(startAndHangEnv); kbs != "" {
+		o := opts
+		o.KBSBinary = kbs
+		if _, _, err := runtime(answering{kbs}, "").Start(t.Context(), "127.0.0.1:0", o); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Println("started")
+		time.Sleep(time.Minute)
+		return
+	}
+	runDirs := tmpfsDir(t)
+	kbs := fakeExecutable(t, "kbs", `trap 'kill $!; : >"$0.term"; exit' TERM; sleep 60 & wait $!`)
+	approve := exec.Command(os.Args[0], "-test.run=^TestKBSGetsSIGTERMWhenApproveIsKilled$")
+	approve.Env = append(os.Environ(), startAndHangEnv+"="+kbs, "XDG_RUNTIME_DIR="+runDirs)
+	var stderr strings.Builder
+	approve.Stderr = &stderr
+	stdout, err := approve.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := approve.Start(); err != nil {
+		t.Fatal(err)
+	}
+	line, _ := bufio.NewReader(stdout).ReadString('\n')
+	if err := approve.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = approve.Wait() // killed
+	if line != "started\n" {
+		t.Fatalf("the approve stand-in printed %q: %s", line, stderr.String())
+	}
+	for range 100 {
+		if exists(t, kbs+".term") {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("KBS got no SIGTERM after the process that started it was killed")
 }
 
 func TestStartReportsKBSFailure(t *testing.T) {

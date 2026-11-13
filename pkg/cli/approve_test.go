@@ -105,12 +105,39 @@ func TestApproveReportsAFailedWipe(t *testing.T) {
 	}
 }
 
-// AT-18: SIGINT or SIGTERM ends approve through its normal cleanup, so the
+// An earlier approve that died without stopping left its Share payload on
+// this machine until the Operator Verifier swept it: the audit says so.
+func TestApproveAuditsASweptRun(t *testing.T) {
+	f := keyCeremonyAndSeal(t)
+	var cvm memnet.Network
+	startTrusteeCVM(t, f, &cvm, io.Discard)
+	ws := &workstation{t: t, cvm: &cvm}
+	start := func(ctx context.Context, address string, opts verifier.Options) (string, func() error, error) {
+		opts.Swept("trustee-bootstrap-verifier-old")
+		return ws.startStubVerifier(ctx, address, opts)
+	}
+	client := &http.Client{Transport: &http.Transport{DialContext: cvm.DialContext}}
+	cmd := cli.NewTrusteeBootstrapCmdWith(client, ws.loopback.DialContext, start)
+	var stderr strings.Builder
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"approve", "--endpoint", "http://" + helperAddr, "--policy", buildPolicy(t, f, "alice"),
+		"--share-file", filepath.Join(f.ceremonyDir, "alice.share")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	want := `"level":"WARN","msg":"verifier_swept"`
+	if !strings.Contains(stderr.String(), want) || !strings.Contains(stderr.String(), `"run":"trustee-bootstrap-verifier-old"`) {
+		t.Errorf("audit records:\n%s\nwant a verifier_swept warning for the old run", stderr.String())
+	}
+}
+
+// AT-18: SIGINT, SIGTERM or SIGHUP ends approve through its normal cleanup, so the
 // Operator Verifier stops. Without a handler the signal would kill the test.
 func TestApproveStopsTheOperatorVerifierOnSignal(t *testing.T) {
 	f := keyCeremonyAndSeal(t)
 	policyDir := buildPolicy(t, f, "alice")
-	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
 		var cvm memnet.Network
 		startTrusteeCVM(t, f, &cvm, io.Discard)
 		stopped := false
