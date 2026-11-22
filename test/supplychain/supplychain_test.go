@@ -95,10 +95,14 @@ var (
 	pinned   = regexp.MustCompile(digest + `$`)
 	// A Containerfile stage: FROM <image>.
 	fromLine = regexp.MustCompile(`(?m)^FROM\s+(\S+)`)
-	// A Kubernetes container image: image: <image>. A $VAR or an @NAME@
-	// placeholder names an image pinned elsewhere.
-	imageLine   = regexp.MustCompile(`(?m)^\s*-?\s*image:\s*(\S+)`)
+	// A Kubernetes container image: image: <image>, on one line. A $VAR or
+	// an @NAME@ placeholder names an image pinned elsewhere.
+	imageLine   = regexp.MustCompile(`(?m)^[ \t]*-?[ \t]*image:[ \t]*(\S+)`)
 	placeholder = regexp.MustCompile(`^(\$\w+|"@\w+@")$`)
+	// A Helm chart's image map: image: alone on its line opens it, and
+	// imageMap reads its repository: and tag: from the next two lines.
+	imageKey = regexp.MustCompile(`(?m)^[ \t]*-?[ \t]*image:[ \t]*$`)
+	imageMap = regexp.MustCompile(`(?m)^[ \t]*-?[ \t]*image:[ \t]*\n[ \t]+repository:[ \t]*(\S+)[ \t]*\n[ \t]+tag:[ \t]*(\S+)`)
 	// A GitHub Actions step: uses: <action>@<ref>.
 	usesLine = regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*(\S+)`)
 	fullSHA  = regexp.MustCompile(`@[0-9a-f]{40}$`)
@@ -140,6 +144,27 @@ func TestImagesAndActionsArePinned(t *testing.T) {
 	}
 }
 
+// A Helm chart's image map pins its tag by digest, or holds placeholders
+// for both repository and tag. An image: key that opens any other map
+// fails, so no image map escapes the check.
+func TestImageMapsArePinned(t *testing.T) {
+	for path, body := range sources(t) {
+		maps := imageMap.FindAllStringSubmatch(body, -1)
+		if keys := len(imageKey.FindAllString(body, -1)); keys != len(maps) {
+			t.Errorf("%s: %d image: keys open a map, but only %d go on with repository: then tag:", path, keys, len(maps))
+		}
+		for _, m := range maps {
+			repo, tag := m[1], m[2]
+			if placeholder.MatchString(repo) && placeholder.MatchString(tag) {
+				continue
+			}
+			if !pinned.MatchString(strings.Trim(tag, `"'`)) {
+				t.Errorf("%s: image repository %s, tag %s is not pinned by digest", path, repo, tag)
+			}
+		}
+	}
+}
+
 func TestPinCheckCatchesUnpinnedReferences(t *testing.T) {
 	// Split, so that the pin check does not find them in this file.
 	for _, ref := range []string{"ghcr" + ".io/x/kbs:v1", "docker" + ".io/library/busybox:1.37.0@sha256:abc", "kindest" + "/node:v1.37.0"} {
@@ -149,6 +174,16 @@ func TestPinCheckCatchesUnpinnedReferences(t *testing.T) {
 	}
 	if m := imageLine.FindStringSubmatch("    - image: busybox"); m == nil || placeholder.MatchString(m[1]) || pinned.MatchString(m[1]) {
 		t.Error("image: busybox passes as pinned")
+	}
+	valuesMap := "  image:\n    repository: busybox\n    tag: latest\n"
+	if imageLine.MatchString(valuesMap) {
+		t.Error("image: takes the next line as its image")
+	}
+	if m := imageMap.FindStringSubmatch(valuesMap); m == nil || pinned.MatchString(m[2]) {
+		t.Error("an image map with tag latest passes as pinned")
+	}
+	if len(imageKey.FindAllString(valuesMap+"  image:\n    tag: latest\n", -1)) != 2 {
+		t.Error("an image: key that opens a map goes uncounted")
 	}
 	if fullSHA.MatchString("actions/checkout@v7") {
 		t.Error("an action tag passes as pinned")
