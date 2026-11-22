@@ -115,6 +115,25 @@ Read from Trustee v0.22.0 source, not from running the image:
 
 QEMU, swtpm and tpm2-tools come from the kind node's distribution packages. They are not pinned. Ticket 04's Comments record the versions that ran.
 
+## Trustee's Helm chart
+
+`E2E_DEPLOY=helm` deploys the Trustee CVM from Trustee's Helm chart with `deploy/helm` (ticket 25, ADR 0010). `test/e2e/helm.sh` pins these, not `versions.yaml`: a change there gives the e2e guest image a new tag, and neither goes into the guest. Checked on 2026-11-22.
+
+| What | Pin | Why |
+|------|-----|-----|
+| Trustee chart | commit `6b5fd14ef69d4ad634295f35a0759e2a3c7c7025`, `deployment/helm-chart`, chart version 0.23.0 | `main` on 2026-11-20; Trustee publishes the chart to no registry. `deploy/helm/trustee-chart.patch` applies to this commit |
+| Helm | `v4.3.1`, `helm-v4.3.1-linux-amd64.tar.gz` sha256 `0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b` | release asset, published 2026-10-15 |
+| Chart dependencies | Bitnami `postgresql` 18.2.0 and `valkey` 6.2.0 from `oci://registry-1.docker.io/bitnamicharts` | the chart's `Chart.lock`. Helm downloads both, and the Trustee CVM renders neither |
+
+The chart's default images are v0.23.0. `deploy/helm/sealed-cvm-values.yaml` replaces the KBS image with `kbs_image` above, and in built-in mode the chart renders no other container. KBS v0.22.0 serves the chart's `/healthz` probe.
+
+Sources:
+
+- https://github.com/confidential-containers/trustee/tree/6b5fd14ef69d4ad634295f35a0759e2a3c7c7025/deployment/helm-chart
+- https://github.com/helm/helm/releases/tag/v4.3.1 and https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz.sha256sum
+
+To move the chart, change the commit in `test/e2e/helm.sh`, here and in `deploy/helm/README.md`, then check that the patch applies and that `E2E_DEPLOY=helm test/e2e/trustee-cvm.sh` passes.
+
 ## Updating a pin
 
 In the same commit, change the value in `versions.yaml` and, here, the row, the source link and the check date. A change to `versions.yaml` gives the e2e guest image a new tag (ticket 23). The PR's e2e run then builds the guest artifacts itself, once. After the merge, the `e2e-guest` workflow publishes the image. If you move Kata, also move Trustee and guest-components to the commits that Kata's `versions.yaml` names.

@@ -23,10 +23,16 @@
 #           policy still rules
 #   AT-26   the Trustee container restarts and serves again from the
 #           published tree, with no new ceremony
+#   recreate  (helm only) a rollout runs one pod at a time; the new pod
+#           waits for Shares, and the same Operator Policies unlock it
 #
 # The helper image goes to a local registry on the kind gateway. The kind
 # node pulls it over plain HTTP (containerd hosts.toml), and so does the
 # guest: the test Init-Data adds an insecure-registry rule to cdh.toml.
+#
+# E2E_DEPLOY=helm deploys the Trustee CVM from upstream's Trustee Helm chart
+# with deploy/helm (test/e2e/helm.sh) instead of deploy/examples, here and in
+# golden-path.sh.
 #
 # Needs: go, python3, openssl, curl, zstd, sudo and podman as the engine
 # (E2E_ENGINE=podman), because the reproducible image build uses podman's
@@ -49,6 +55,7 @@ examples=$repo/deploy/examples
 work=${E2E_WORK:-$(mktemp -d)}
 mkdir -p "$work"
 GO=${GO:-go}
+E2E_DEPLOY=${E2E_DEPLOY:-pod}
 REGISTRY_NAME=$CLUSTER-registry
 POD=trustee-cvm
 HELPER_SVC=trustee-bootstrap-helper
@@ -62,7 +69,8 @@ SECRET_VALUE=trustee-workload-ok
 
 # delete_objects [--wait]: everything this test puts in the cluster.
 delete_objects() {
-	kc delete pod "$POD" tmpfs-probe workload-ok workload-other workload-again --ignore-not-found "${1:---wait=false}" >/dev/null 2>&1
+	remove_cvm "${1:---wait=false}"
+	kc delete pod tmpfs-probe workload-ok workload-other workload-again --ignore-not-found "${1:---wait=false}" >/dev/null 2>&1
 	kc delete service "$HELPER_SVC" "$TRUSTEE_SVC" --ignore-not-found >/dev/null 2>&1
 	kc delete configmap trustee-ceremony-manifest trustee-sealed-bundle --ignore-not-found >/dev/null 2>&1
 }
@@ -248,10 +256,12 @@ host_state_dir() {
 	echo "/var/lib/kubelet/pods/$(kc get pod "$1" -o jsonpath='{.metadata.uid}')/volumes/kubernetes.io~empty-dir/state"
 }
 
-# apply_cvm: create the Trustee CVM from the manifest on stdin.
+# apply_cvm: create the Trustee CVM from the manifest on stdin. Feed it with
+# < or < <(...), not a pipe: helm.sh's apply_cvm sets POD, and a pipeline
+# would set it in a subshell.
 # remove_cvm [--wait=false]: delete it, and by default wait until it's gone.
 apply_cvm() { kc apply -f - >/dev/null; }
-remove_cvm() { kc delete pod "$POD" --ignore-not-found "${1:---wait}" >/dev/null; }
+remove_cvm() { kc delete pod "$POD" --ignore-not-found "${1:---wait}" >/dev/null 2>&1; }
 
 # upload_inputs: the Ceremony Manifest and the Sealed Bundle as ConfigMaps.
 upload_inputs() {
@@ -418,7 +428,7 @@ check_trustee_restart() {
 # The same pod and policy, with one helper arg changed.
 check_tampered() {
 	remove_cvm
-	sed 's|--proxy-port=8081|--proxy-port=8082|' "$work/trustee-cvm.yaml" | apply_cvm
+	apply_cvm < <(sed 's|--proxy-port=8081|--proxy-port=8082|' "$work/trustee-cvm.yaml")
 	local events='' uid
 	uid=$(kc get pod "$POD" -o jsonpath='{.metadata.uid}')
 	for _ in $(seq 90); do
@@ -451,7 +461,7 @@ check_image_swap() {
 	eng push -q --tls-verify=false --digestfile "$work/swap/digest" "$registry/trustee-bootstrap/swap:$1"
 	eng rmi "$registry/trustee-bootstrap/swap:$1" >/dev/null
 	swap=$registry/trustee-bootstrap/swap@$(cat "$work/swap/digest")
-	sed "s|$from|$swap|" "$work/trustee-cvm.yaml" | apply_cvm
+	apply_cvm < <(sed "s|$from|$swap|" "$work/trustee-cvm.yaml")
 	uid=$(kc get pod "$POD" -o jsonpath='{.metadata.uid}')
 	if [[ $1 == trustee ]]; then
 		wait_helper
@@ -531,6 +541,7 @@ main() {
 	check_host_attacks
 	check_workloads
 	check_trustee_restart
+	[[ $E2E_DEPLOY != helm ]] || check_recreate
 	check_tampered
 	check_image_swap helper
 	check_image_swap trustee
@@ -538,5 +549,14 @@ main() {
 	check_tmpfs
 	info "PASS"
 }
+
+case $E2E_DEPLOY in
+pod) ;;
+helm)
+	# shellcheck source=helm.sh
+	source "$script_dir/helm.sh"
+	;;
+*) die "E2E_DEPLOY is pod or helm, not $E2E_DEPLOY" ;;
+esac
 
 [[ ${BASH_SOURCE[0]} != "$0" ]] || main "$@"

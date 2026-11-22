@@ -12,6 +12,8 @@ Today no claim profile has passed a real-TEE run (`docs/claim-profiles.md`), so 
 
 ## Part 1: deploy the Trustee CVM (Infrastructure Operator)
 
+These steps deploy the example pod from `deploy/examples/`. To deploy from Trustee's Helm chart, do steps 1 and 2, then follow [`deploy/helm/README.md`](../../deploy/helm/README.md) in place of steps 3 to 7.
+
 ### Preconditions
 
 - `ceremony.json` and its published SHA-256 from the [Key Ceremony](key-ceremony.md); `bundle.age` and its published digest from [Seal the config](seal.md).
@@ -84,7 +86,7 @@ Today no claim profile has passed a real-TEE run (`docs/claim-profiles.md`), so 
    grep -A2 '"ExecProcessRequest": {' init.toml             # allowed_commands and regex both []
    grep -n '"ReadStreamRequest"' init.toml                  # false
    grep -n 'url = ' init.toml                                # http://127.0.0.1:8081 only
-   grep -o '"io.kubernetes.cri.container-name": "[^"]*"' init.toml | sort -u   # bootstrap-helper and trustee, nothing else
+   grep -o '"io.kubernetes.cri.container-name": "[^"]*"' init.toml | sort -u   # bootstrap-helper and trustee (kbs from the Helm chart), nothing else
    grep -c trustee_bootstrap_allow_image init.toml           # not 0: the rule that pins each image
    ```
    Read the rest of the `policy.rego` entry as well. A hash proves only that every Security Operator saw the same file.

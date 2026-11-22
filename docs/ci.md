@@ -56,6 +56,17 @@ The image tag is the sha256 of `versions.yaml`, `test/e2e/guest-build.sh` and `t
 
 The package must be public, so that pull requests, from forks too, can pull it without credentials. If the first push creates it private, an admin makes it public once, in the package's settings. Until then, every e2e run builds the artifacts itself.
 
+## The Helm deployment
+
+`E2E_DEPLOY=helm` makes `trustee-cvm.sh` and `golden-path.sh` deploy the Trustee CVM from Trustee's Helm chart with `deploy/helm`, instead of the example pod. CI doesn't run it. Run it on the scratch VM or your machine after `kind-kata-swtpm.sh up`, and before each commit that touches `deploy/helm/` or `test/e2e/helm.sh`:
+
+```sh
+E2E_ENGINE=podman E2E_DEPLOY=helm test/e2e/trustee-cvm.sh
+E2E_ENGINE=podman E2E_DEPLOY=helm test/e2e/golden-path.sh >transcript.txt
+```
+
+[`deploy/helm/README.md`](../deploy/helm/README.md) gives the steps it runs.
+
 ## Adding a test
 
 A later ticket adds its acceptance test to `test/e2e/ci.sh`, or as a Go test that `go test ./...` runs. The workflow needs no change.

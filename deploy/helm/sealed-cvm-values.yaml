@@ -1,0 +1,91 @@
+# The Trustee CVM (spec §7) from upstream's Trustee Helm chart, with
+# trustee-chart.patch applied: the pod in deploy/examples/trustee-cvm.yaml,
+# as a Deployment with one replica. README.md in this directory gives the
+# steps.
+#
+# Before you render it, replace:
+#   @HELPER_IMAGE@     the Bootstrap Helper image, pinned by digest
+#   @MANIFEST_SHA256@  the hex SHA-256 of ceremony.json
+#   @KBS_REPOSITORY@   the pinned KBS image (docs/upstream-pins.md) up to
+#   @KBS_TAG@          its first ":", and the rest: built-in-as-…@sha256:…
+fullnameOverride: trustee
+
+# KBS runs the Attestation Service and RVPS in-process, as in the example
+# pod; the chart deploys neither on its own.
+attestationService:
+  mode: builtin
+
+kbs:
+  # One CVM per Key Ceremony. ADR 0009 has not chosen how replicas unlock.
+  replicaCount: 1
+  # The old pod goes before the new one starts, so the helper Service never
+  # routes to a pod whose helper has exited. A new pod needs a new Unlock
+  # Ceremony.
+  strategy:
+    type: Recreate
+  # The e2e cluster's class. Use the class for your TEE.
+  runtimeClassName: kata-qemu-coco-dev-tpm
+  image:
+    repository: "@KBS_REPOSITORY@"
+    tag: "@KBS_TAG@"
+    pullPolicy: IfNotPresent
+  podAnnotations:
+    # The guest pulls and unpacks both images into its own memory; the KBS
+    # image does not fit in a 1 GiB guest.
+    io.katacontainers.config.hypervisor.default_memory: "2048"
+  # Kata adds each container's memory limit to the guest's memory.
+  resources: null
+  # The helper publishes Trustee's config tree here. With configFile set,
+  # the chart renders no config and mounts no key Secret or storage volume.
+  configFile: /trustee/config/kbs.toml
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+      scheme: HTTPS
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+      scheme: HTTPS
+    initialDelaySeconds: 15
+    periodSeconds: 20
+  extraInitContainers:
+    - name: bootstrap-helper
+      image: "@HELPER_IMAGE@"
+      args:
+        - --manifest=/bootstrap/manifest/ceremony.json
+        - --manifest-sha256=@MANIFEST_SHA256@
+        - --bundle=/bootstrap/bundle/bundle.age
+        - --out=/trustee/config
+        # The KBS image sets no USER, so Trustee runs as root.
+        - --owner-uid=0
+        - --owner-gid=0
+        - --listen=:8090
+        - --proxy-port=8081
+      ports:
+        - containerPort: 8090
+      volumeMounts:
+        - name: manifest
+          mountPath: /bootstrap/manifest
+          readOnly: true
+        - name: bundle
+          mountPath: /bootstrap/bundle
+          readOnly: true
+        - name: state
+          mountPath: /trustee
+  extraVolumeMounts:
+    - name: state
+      mountPath: /trustee
+  extraVolumes:
+    - name: manifest
+      configMap:
+        name: trustee-ceremony-manifest
+    - name: bundle
+      configMap:
+        name: trustee-sealed-bundle
+    # A tmpfs inside the guest. It holds the published tree and disappears
+    # with the pod (ADR 0002).
+    - name: state
+      emptyDir:
+        medium: Memory

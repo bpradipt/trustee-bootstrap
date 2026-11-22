@@ -30,6 +30,7 @@ These tickets cut [`IMPLEMENTATION_SPEC.md`](../../IMPLEMENTATION_SPEC.md) into 
 | 22 | [Review the Trustee CVM's container set](22-review-the-container-set.md) | done | |
 | 23 | [Build the e2e guest artifacts once and pull them from ghcr.io](23-prebuilt-e2e-guest-image.md) | done | |
 | 24 | [Keep Trustee available across replica restarts](24-trustee-availability.md) | needs-decision | ADR 0009: a quorum Unlock Ceremony for each replica, or replicas that unlock from a running one |
+| 25 | [Deploy the Trustee CVM with Trustee's Helm chart](25-deploy-with-trustees-helm-chart.md) | in-progress | |
 
 Ticket 17 is the go/no-go. Until it passes, every claim profile stays untested and nobody runs a production unlock.
 
