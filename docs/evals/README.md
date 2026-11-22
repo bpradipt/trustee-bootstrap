@@ -25,10 +25,10 @@ A cluster that refuses everything passes every negative eval. The healthy-path e
 | EV-13 | [Relay cut after release](13-relay-cut-after-release.md) | partial failure | `evals-cluster.sh` | pass, 2026-11-12 |
 | EV-14 | [Broken sealed resource policy](14-broken-sealed-policy.md) | partial failure | `evals-cluster.sh` | pass, 2026-11-12 |
 | EV-15 | [Canary sweep after a full unlock](15-canary-sweep.md) | secret hygiene | `evals.sh` | pass, 2026-11-12 |
-| EV-16 | [Deployed Trustee CVM waits for Shares](16-healthy-before-unlock.md) | healthy path | `golden-path.sh` | pass, 2026-11-12 |
-| EV-17 | [Two Security Operators unlock Trustee](17-healthy-unlock.md) | healthy path | `golden-path.sh` | pass, 2026-11-12 |
-| EV-18 | [A CoCo workload gets a key from the unlocked Trustee](18-healthy-workload-gets-key.md) | healthy path | `golden-path.sh` | pass, 2026-11-12 |
-| EV-19 | [Trustee container restarts inside the running CVM](19-healthy-trustee-restart.md) | healthy path | `golden-path.sh` | pass, 2026-11-12 |
+| EV-16 | [Deployed Trustee CVM waits for Shares](16-healthy-before-unlock.md) | healthy path | `golden-path.sh` | pass, 2026-11-22 |
+| EV-17 | [Two Security Operators unlock Trustee](17-healthy-unlock.md) | healthy path | `golden-path.sh` | pass, 2026-11-22 |
+| EV-18 | [A CoCo workload gets a key from the unlocked Trustee](18-healthy-workload-gets-key.md) | healthy path | `golden-path.sh` | pass, 2026-11-22 |
+| EV-19 | [Trustee container restarts inside the running CVM](19-healthy-trustee-restart.md) | healthy path | `golden-path.sh` | pass, 2026-11-22 |
 
 **Runs on:**
 
@@ -57,6 +57,8 @@ export E2E_ENGINE=podman
 test/e2e/kind-kata-swtpm.sh up         # once; about 25 min cold, 6 min warm
 test/e2e/golden-path.sh >transcript.txt
 ```
+
+With `E2E_DEPLOY=helm`, `golden-path.sh` runs the same four evals on a Trustee CVM deployed from Trustee's Helm chart ([`deploy/helm/`](../../deploy/helm/README.md)). The other eval scripts run only the example pod.
 
 ### Scripted negative evals
 
