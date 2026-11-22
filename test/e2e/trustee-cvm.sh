@@ -52,15 +52,18 @@ GO=${GO:-go}
 REGISTRY_NAME=$CLUSTER-registry
 POD=trustee-cvm
 HELPER_SVC=trustee-bootstrap-helper
-# Trustee's certificate names a cluster-internal host only (spec §1).
-TRUSTEE_HOST=trustee.default.svc.cluster.local
+# Workloads reach the unlocked Trustee through this Service. Trustee's
+# certificate names its cluster-internal host only (spec §1).
+TRUSTEE_SVC=trustee
+TRUSTEE_HOST=$TRUSTEE_SVC.default.svc.cluster.local
+KBS_CONTAINER=trustee
 SECRET=default/e2e/secret
 SECRET_VALUE=trustee-workload-ok
 
 # delete_objects [--wait]: everything this test puts in the cluster.
 delete_objects() {
 	kc delete pod "$POD" tmpfs-probe workload-ok workload-other workload-again --ignore-not-found "${1:---wait=false}" >/dev/null 2>&1
-	kc delete service "$HELPER_SVC" trustee --ignore-not-found >/dev/null 2>&1
+	kc delete service "$HELPER_SVC" "$TRUSTEE_SVC" --ignore-not-found >/dev/null 2>&1
 	kc delete configmap trustee-ceremony-manifest trustee-sealed-bundle --ignore-not-found >/dev/null 2>&1
 }
 
@@ -245,13 +248,23 @@ host_state_dir() {
 	echo "/var/lib/kubelet/pods/$(kc get pod "$1" -o jsonpath='{.metadata.uid}')/volumes/kubernetes.io~empty-dir/state"
 }
 
-deploy() {
+# apply_cvm: create the Trustee CVM from the manifest on stdin.
+# remove_cvm [--wait=false]: delete it, and by default wait until it's gone.
+apply_cvm() { kc apply -f - >/dev/null; }
+remove_cvm() { kc delete pod "$POD" --ignore-not-found "${1:---wait}" >/dev/null; }
+
+# upload_inputs: the Ceremony Manifest and the Sealed Bundle as ConfigMaps.
+upload_inputs() {
 	node mkdir -p /tmp/trustee-cvm
 	eng cp "$work/ceremony/ceremony.json" "$CLUSTER-control-plane:/tmp/trustee-cvm/ceremony.json"
 	eng cp "$work/bundle.age" "$CLUSTER-control-plane:/tmp/trustee-cvm/bundle.age"
 	kc create configmap trustee-ceremony-manifest --from-file=/tmp/trustee-cvm/ceremony.json >/dev/null
 	kc create configmap trustee-sealed-bundle --from-file=/tmp/trustee-cvm/bundle.age >/dev/null
-	kc apply -f - <"$work/trustee-cvm.yaml" >/dev/null
+}
+
+deploy() {
+	upload_inputs
+	apply_cvm <"$work/trustee-cvm.yaml"
 	endpoint=$(helper_endpoint)
 }
 
@@ -292,7 +305,7 @@ unlock() {
 # The pod runs under the generated agent policy.
 check_policy() {
 	local out
-	if out=$(kc exec "$POD" -c trustee -- /usr/local/bin/kbs --help 2>&1); then die "exec ran: $out"; fi
+	if out=$(kc exec "$POD" -c "$KBS_CONTAINER" -- /usr/local/bin/kbs --help 2>&1); then die "exec ran: $out"; fi
 	[[ $out == *"ExecProcessRequest is blocked by policy"* ]] || die "exec failed, but not by policy: $out"
 	info "policy: exec into the Trustee container is denied: ExecProcessRequest is blocked by policy"
 }
@@ -347,7 +360,7 @@ check_tmpfs() {
 # sealed policy wants. check_workloads then shows that policy still rules.
 check_host_attacks() {
 	local ip url out
-	ip=$(kc get service trustee -o jsonpath='{.spec.clusterIP}')
+	ip=$(kc get service "$TRUSTEE_SVC" -o jsonpath='{.spec.clusterIP}')
 	url=https://$ip:8080
 	# Ready doesn't mean routed: kube-proxy adds the Service's endpoint a
 	# moment after the pod turns Ready, and refuses connections until then.
@@ -404,8 +417,8 @@ check_trustee_restart() {
 
 # The same pod and policy, with one helper arg changed.
 check_tampered() {
-	kc delete pod "$POD" --ignore-not-found --wait >/dev/null
-	sed 's|--proxy-port=8081|--proxy-port=8082|' "$work/trustee-cvm.yaml" | kc apply -f - >/dev/null
+	remove_cvm
+	sed 's|--proxy-port=8081|--proxy-port=8082|' "$work/trustee-cvm.yaml" | apply_cvm
 	local events='' uid
 	uid=$(kc get pod "$POD" -o jsonpath='{.metadata.uid}')
 	for _ in $(seq 90); do
@@ -418,7 +431,7 @@ check_tampered() {
 		die "a changed helper arg was not refused: ${events:0:2000}"
 	[[ -z $(kc get pod "$POD" -o jsonpath='{.status.initContainerStatuses[0].state.running}') ]] ||
 		die "the helper runs with a changed arg"
-	kc delete pod "$POD" --wait=false >/dev/null
+	remove_cvm --wait=false
 	info "policy: with --proxy-port changed, the agent refused to create the helper container"
 }
 
@@ -430,7 +443,7 @@ check_tampered() {
 check_image_swap() {
 	local from=$helper_image status=initContainerStatuses swap events='' uid out holder
 	if [[ $1 == trustee ]]; then from=$KBS_IMAGE status=containerStatuses; fi
-	kc delete pod "$POD" --ignore-not-found --wait >/dev/null
+	remove_cvm
 	mkdir -p "$work/swap"
 	echo "not the approved image" >"$work/swap/marker"
 	printf 'FROM %s\nCOPY marker /swap-marker\n' "$from" >"$work/swap/Containerfile"
@@ -438,7 +451,7 @@ check_image_swap() {
 	eng push -q --tls-verify=false --digestfile "$work/swap/digest" "$registry/trustee-bootstrap/swap:$1"
 	eng rmi "$registry/trustee-bootstrap/swap:$1" >/dev/null
 	swap=$registry/trustee-bootstrap/swap@$(cat "$work/swap/digest")
-	sed "s|$from|$swap|" "$work/trustee-cvm.yaml" | kc apply -f - >/dev/null
+	sed "s|$from|$swap|" "$work/trustee-cvm.yaml" | apply_cvm
 	uid=$(kc get pod "$POD" -o jsonpath='{.metadata.uid}')
 	if [[ $1 == trustee ]]; then
 		wait_helper
@@ -455,7 +468,7 @@ check_image_swap() {
 		die "the $1 container from another image ran under the approved Init-Data: ${events:0:2000}"
 	[[ -z $(kc get pod "$POD" -o jsonpath="{.status.${status}[0].state.running}") ]] ||
 		die "the $1 container runs from another image"
-	kc delete pod "$POD" --wait=false >/dev/null
+	remove_cvm --wait=false
 	info "policy: with only the $1 container's image swapped, the agent refused to create it"
 }
 
@@ -463,13 +476,13 @@ check_image_swap() {
 # manifest ConfigMap. The policy can't pin ConfigMap contents, so the helper
 # starts, and --manifest-sha256 makes it fail in LOCKED.
 check_swapped_manifest() {
-	kc delete pod "$POD" --ignore-not-found --wait >/dev/null
+	remove_cvm
 	mkdir -p "$work/other"
 	tb ceremony split --threshold 2 --holders x,y --out-dir "$work/other" >/dev/null
 	eng cp "$work/other/ceremony.json" "$CLUSTER-control-plane:/tmp/trustee-cvm/other.json"
 	kc delete configmap trustee-ceremony-manifest >/dev/null
 	kc create configmap trustee-ceremony-manifest --from-file=ceremony.json=/tmp/trustee-cvm/other.json >/dev/null
-	kc apply -f - <"$work/trustee-cvm.yaml" >/dev/null
+	apply_cvm <"$work/trustee-cvm.yaml"
 	# The helper's exit code, now or before its last restart.
 	local codes='' exit1='(^| )1( |$)'
 	for _ in $(seq 150); do
@@ -479,7 +492,7 @@ check_swapped_manifest() {
 	done
 	[[ $codes =~ $exit1 ]] || die "the helper did not fail with a swapped manifest: exit codes '$codes'; $(kc describe pod "$POD" | tail -10)"
 	tb status --endpoint "$endpoint" >/dev/null 2>&1 && die "the helper serves with a swapped manifest"
-	kc delete pod "$POD" --wait=false >/dev/null
+	remove_cvm --wait=false
 	info "AT-11: with another ceremony.json in the ConfigMap, the helper exited 1 in LOCKED"
 }
 

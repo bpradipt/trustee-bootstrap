@@ -116,10 +116,10 @@ ev16() {
 	section "EV-16: Deployed Trustee CVM waits for Shares"
 	show "kubectl get pod $POD" kc get pod "$POD"
 	has_row "$POD" 0/1 Init:0/1 0 || die "the pod is not 0/1 Init:0/1 with 0 restarts"
-	show "kubectl get service $HELPER_SVC trustee" kc get service "$HELPER_SVC" trustee
-	show "kubectl get endpoints $HELPER_SVC trustee" kc get endpoints "$HELPER_SVC" trustee
+	show "kubectl get service $HELPER_SVC $TRUSTEE_SVC" kc get service "$HELPER_SVC" "$TRUSTEE_SVC"
+	show "kubectl get endpoints $HELPER_SVC $TRUSTEE_SVC" kc get endpoints "$HELPER_SVC" "$TRUSTEE_SVC"
 	has_row "$HELPER_SVC" "$pod_ip:8090" || die "the helper Service has no endpoint while the pod is not Ready"
-	grep -Eq '^trustee +[0-9][0-9smhd]*$' <<<"$out" || die "the trustee Service has an endpoint before the unlock"
+	grep -Eq "^$TRUSTEE_SVC +[0-9][0-9smhd]*$" <<<"$out" || die "the $TRUSTEE_SVC Service has an endpoint before the unlock"
 	show_status
 	expect_status "$key_id COLLECTING 2 [] []"
 	first_boot=$boot_id
@@ -143,18 +143,18 @@ ev17() {
 	show "kubectl get pod $POD -o jsonpath='{.status.initContainerStatuses[0].state.terminated}'" \
 		pod "$POD" '{.status.initContainerStatuses[0].state.terminated}'
 	[[ $out == *'"exitCode":0,'*'"reason":"Completed"'* ]] || die "the helper did not exit 0"
-	show "kubectl get endpoints $HELPER_SVC trustee" kc get endpoints "$HELPER_SVC" trustee
-	has_row trustee "$pod_ip:8080" || die "the trustee Service has no endpoint after the unlock"
+	show "kubectl get endpoints $HELPER_SVC $TRUSTEE_SVC" kc get endpoints "$HELPER_SVC" "$TRUSTEE_SVC"
+	has_row "$TRUSTEE_SVC" "$pod_ip:8080" || die "the $TRUSTEE_SVC Service has no endpoint after the unlock"
 	show_events "$POD" "$EVENT_COLUMNS"
 	local unexpected
-	unexpected=$(warnings 'Unhealthy +spec\.containers\{trustee\} +Readiness probe failed')
+	unexpected=$(warnings "Unhealthy +spec\\.containers\\{$KBS_CONTAINER\\} +Readiness probe failed")
 	[[ -z $unexpected ]] || die "unexpected Warning events: $unexpected"
-	for c in bootstrap-helper trustee; do
+	for c in bootstrap-helper "$KBS_CONTAINER"; do
 		show "kubectl logs $POD -c $c" kc logs "$POD" -c "$c"
 		((rc == 0)) || die "kubectl logs -c $c failed"
 		[[ -z $out ]] || die "the host read the $c container's log"
 	done
-	show "kubectl exec $POD -c trustee -- true" kc exec "$POD" -c trustee -- true
+	show "kubectl exec $POD -c $KBS_CONTAINER -- true" kc exec "$POD" -c "$KBS_CONTAINER" -- true
 	[[ $out == *"ExecProcessRequest is blocked by policy"* ]] || die "exec was not blocked by the agent policy"
 	show "ls -A <host side of the state volume>" node ls -A "$(host_state_dir "$POD")"
 	((rc == 0)) || die "no state volume on the host"
