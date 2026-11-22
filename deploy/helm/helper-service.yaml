@@ -1,0 +1,18 @@
+# Security Operators reach the Bootstrap Helper here. The chart's pod is not
+# Ready while the init container runs, so the Service must publish
+# not-ready addresses. The selector is the chart's KBS pod labels for
+# release "trustee"; change app.kubernetes.io/instance for another release.
+apiVersion: v1
+kind: Service
+metadata:
+  name: trustee-bootstrap-helper
+spec:
+  type: NodePort
+  selector:
+    app: kbs
+    app.kubernetes.io/name: trustee
+    app.kubernetes.io/instance: trustee
+  publishNotReadyAddresses: true
+  ports:
+    - port: 8090
+      targetPort: 8090

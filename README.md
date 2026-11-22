@@ -36,7 +36,7 @@ Each prompt names who runs the step. The Ceremony Authority splits the key, and 
 | New to the project | this page, then [`IMPLEMENTATION_SPEC.md`](IMPLEMENTATION_SPEC.md) §0 to §2 and the [ADRs](docs/adr/) |
 | A Security Operator | [Unlock Ceremony runbook](docs/runbooks/unlock-ceremony.md), [withdrawing an approval](docs/runbooks/withdraw-approval.md), [claim profiles](docs/claim-profiles.md) |
 | The Ceremony Authority | [Key Ceremony runbook](docs/runbooks/key-ceremony.md), [roster change](docs/runbooks/roster-change.md) |
-| The Infrastructure Operator | [sealing runbook](docs/runbooks/seal.md), [Trustee upgrade](docs/runbooks/trustee-upgrade.md), the example pod in [`deploy/examples/`](deploy/examples/) |
+| The Infrastructure Operator | [sealing runbook](docs/runbooks/seal.md), [Trustee upgrade](docs/runbooks/trustee-upgrade.md), the example pod in [`deploy/examples/`](deploy/examples/), or Trustee's Helm chart with [`deploy/helm/`](deploy/helm/) |
 | A reviewer | [`SECURITY_THREAT_MODEL.md`](SECURITY_THREAT_MODEL.md), then the [tickets](docs/tickets/README.md): each one records what ran and what it deferred. The [evals](docs/evals/README.md) test the threat model's claims against operator mistakes and a hostile host |
 | A contributor | [`AGENTS.md`](AGENTS.md), [`docs/ci.md`](docs/ci.md), the [tickets](docs/tickets/README.md) |
 
@@ -56,7 +56,14 @@ The end-to-end tests need a Linux host with KVM, sudo and rootful podman. They b
 test/e2e/ci.sh e2e             # about 20 minutes cold, 6 with the build cache
 ```
 
-[`docs/ci.md`](docs/ci.md) explains what each CI job runs. [`docs/upstream-pins.md`](docs/upstream-pins.md) lists the exact Trustee, guest-components and Kata versions the tests use.
+To run the same tests on a Trustee CVM deployed from Trustee's Helm chart, set `E2E_DEPLOY=helm`:
+
+```sh
+E2E_ENGINE=podman test/e2e/kind-kata-swtpm.sh up
+E2E_ENGINE=podman E2E_DEPLOY=helm test/e2e/trustee-cvm.sh
+```
+
+[`deploy/helm/README.md`](deploy/helm/README.md) gives the deploy steps and the e2e commands. [`docs/ci.md`](docs/ci.md) explains what each CI job runs. [`docs/upstream-pins.md`](docs/upstream-pins.md) lists the exact Trustee, guest-components and Kata versions the tests use.
 
 ## Using it from cococtl
 
@@ -75,6 +82,7 @@ pkg/verifier/            Operator Verifier, default secure configs, sealed-confi
 pkg/relay/               relay framing and limits
 pkg/helper/              Bootstrap Helper state machine and API
 deploy/examples/         example Trustee CVM pod, Init-Data and Trustee config
+deploy/helm/             patch and values to deploy the Trustee CVM from Trustee's Helm chart
 test/e2e/                kind + Kata + swtpm environment and the end-to-end tests
 docs/                    ADRs, runbooks, tickets, evals, claim profiles, pins, CI
 ```
