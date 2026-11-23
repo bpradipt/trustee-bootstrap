@@ -55,8 +55,8 @@ _Avoid_: bootstrap policy, approved policy
 ## Components
 
 **Trustee CVM**:
-The confidential VM in which full Trustee will run once unlocked.
-_Avoid_: target CVM, primary Trustee, Trustee pod
+The CoCo pod that runs Trustee, and the confidential VM that its runtime class runs it in. The pod holds the Bootstrap Helper init container and Trustee's containers: KBS with the built-in Attestation Service, or KBS, AS and RVPS. We name it after the CVM because Security Operators attest the CVM, and the CVM holds Trustee's state.
+_Avoid_: target CVM, primary Trustee, Trustee pod (upstream's Helm chart deploys plain, non-confidential Trustee pods)
 
 **Bootstrap Helper**:
 The component inside the Trustee CVM that collects Shares, reconstructs the private key and unseals the Sealed Bundle before Trustee starts.
