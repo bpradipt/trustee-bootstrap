@@ -60,4 +60,4 @@ The eval passes when:
 ## Results
 
 - 2026-11-12, `6057ad8`, scratch VM (kind + Kata 4.2.0 + swtpm, 4 vCPU, 6 GB): **pass**. The output above comes from this run.
-- 2026-11-22, `092949c`, scratch VM (kind + Kata 4.2.0 + swtpm, 4 vCPU, 6 GB): **pass**, on the example pod and, with `E2E_DEPLOY=helm`, on the Trustee CVM from Trustee's Helm chart (ticket 25). The Helm run names the Service `trustee-kbs` and the container `kbs`.
+- 2026-11-22, `f0e9d8d`, scratch VM (kind + Kata 4.2.0 + swtpm, 4 vCPU, 6 GB): **pass**, on the example pod and, with `E2E_DEPLOY=helm`, on the Trustee CVM from Trustee's Helm chart (ticket 25). The Helm run names the Service `trustee-kbs` and the container `kbs`.
